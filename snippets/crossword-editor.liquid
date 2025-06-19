@@ -1,0 +1,46 @@
+<div class="editor-modal" style="display: none;">
+  <div class="editor-content">
+    <div class="editor-header">
+      <h2>Customize Your <span class="product-title"></span></h2>
+      <p class="price"></p>
+    </div>
+    
+    <div class="editor-layout">
+      <div class="preview-area">
+        <div class="product-preview" id="preview-container">
+          <img src="" alt="" class="product-base">
+          <div class="print-area">
+            <img src="" alt="Your design" class="design-preview" id="design-preview">
+          </div>
+        </div>
+      </div>
+
+      <div class="editor-controls">
+        <div class="control-group">
+          <label>Size</label>
+          <div class="size-controls">
+            <button onclick="crosswordEditor.adjustDesign('size', 'decrease')" class="control-btn">-</button>
+            <button onclick="crosswordEditor.adjustDesign('size', 'increase')" class="control-btn">+</button>
+          </div>
+        </div>
+
+        <div class="control-group">
+          <label>Position</label>
+          <div class="position-controls">
+            <button onclick="crosswordEditor.adjustDesign('position', 'up')" class="control-btn">↑</button>
+            <button onclick="crosswordEditor.adjustDesign('position', 'down')" class="control-btn">↓</button>
+            <button onclick="crosswordEditor.adjustDesign('position', 'left')" class="control-btn">←</button>
+            <button onclick="crosswordEditor.adjustDesign('position', 'right')" class="control-btn">→</button>
+          </div>
+        </div>
+        <div id="feedback-modal" style="display: none;">
+        <div id="feedback-message"></div>
+    </div>
+
+    {{ 'crossword-editor.js' | asset_url | script_tag }}
+        <button class="add-to-cart-btn">Add to Cart</button>
+        <button onclick="crosswordEditor.closeEditor()" class="back-button">Back to Products</button>
+      </div>
+    </div>
+  </div>
+</div>
