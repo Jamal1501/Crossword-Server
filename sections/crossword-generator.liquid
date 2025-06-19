@@ -1,0 +1,29 @@
+<div class="page-width">
+  {% render 'crossword-generator' %}
+</div>
+
+{% schema %}
+{
+  "name": "Crossword Builder",
+  "settings": [
+    {
+      "type": "text",
+      "id": "title",
+      "label": "Title",
+      "default": "Crossword Puzzle Generator"
+    }
+  ],
+  "presets": [
+    {
+      "name": "Crossword Builder",
+      "category": "Interactive"
+    }
+  ]
+}
+{% endschema %}
+<script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/seedrandom/3.0.5/seedrandom.min.js"></script>
+{{ 'crossword-generator.css' | asset_url | stylesheet_tag }}
+{{ 'crossword-generator.js' | asset_url | script_tag }}
+{{ 'crossword-editor.js' | asset_url | script_tag }}
+{{ 'crossword-api.js' | asset_url | script_tag }}
