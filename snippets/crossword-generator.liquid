@@ -1,0 +1,63 @@
+<div class="container crossword-puzzle-generator">
+  <header>
+    <h1>Crossword Puzzle Generator</h1>
+    <div class="controls">
+      <label for="grid-size">Grid Size:</label>
+      <input type="number" id="grid-size" value="15" min="5" max="20" />
+    </div>
+  </header>
+
+  <main>
+    <div class="input-section">
+      <h2>Enter Words and Clues</h2>
+      <div id="bulk-input">
+        <textarea id="word-clues" placeholder="Enter one word and clue per line in this format:
+paris - City we met in
+london - The Big Ben city
+coffee - Morning necessity
+pizza - Italian circular delight"></textarea>
+        <div class="button-group">
+    <button id="generate-button" class="primary-button">Generate New Layout</button>
+    <button id="save-puzzle" class="secondary-button">Save Puzzle</button>
+    <button id="clear-button" class="secondary-button">Clear All</button>
+    <button id="view-saved" class="secondary-button">View Saved Puzzles</button>
+</div>
+      </div>
+    </div>
+
+    <div class="crossword-section">
+      <div class="puzzle-container">
+        <div id="crossword-grid"></div>
+        
+        <div class="version-navigation">
+          <button id="prev-version">&#10094;</button>
+          <span class="version-indicator">Version 1</span>
+          <button id="next-version">&#10095;</button>
+        </div>
+         </br>
+        <div class="puzzle-controls">
+          <div class="action-buttons">
+            <div class="puzzle-controls">
+              <button id="saveCrossword" class="primary-button">Save Crossword to Product</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="warnings" class="warnings-container"></div>
+        <div id="clues" class="clues-container"></div>
+        <div id="image-preview">
+          <img id="puzzle-image" alt="Puzzle preview" style="display: none; max-width: 100%" />
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="feedback-modal" class="modal">
+    <div class="modal-content">
+      <p id="feedback-message"></p>
+    </div>
+  </div>
+
+  {% render 'crossword-editor' %}
+  {% render 'crossword-product-modal' %}
+</div>
