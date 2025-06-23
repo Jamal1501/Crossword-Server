@@ -32,7 +32,7 @@ export async function createProduct({ imageUrl, blueprintId, variantId, x, y, sc
   const body = {
     title: 'Crossword Test Mug',
     blueprint_id: blueprintId,
-    print_provider_id: 1,
+    print_provider_id: 3,
     variants: [
       { id: variantId, price: 1500, is_enabled: true }
     ],
