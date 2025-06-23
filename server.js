@@ -53,6 +53,32 @@ app.get('/api/printify/test', async (req, res) => {
   }
 });
 
+app.post('/api/printify/create-test-product', async (req, res) => {
+  try {
+    const imageUrl = 'https://res.cloudinary.com/dpe19wze8/image/upload/v1738227677/crosswords/vlbu6emlx4bausp1gm4x.png';
+    const blueprintId = 30;
+    const variantId = 465;
+    const x = 0.5;
+    const y = 0.5;
+    const scale = 1.0;
+
+    const result = await printifyService.createProduct({
+      imageUrl,
+      blueprintId,
+      variantId,
+      x,
+      y,
+      scale
+    });
+
+    res.json({ success: true, product: result });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Product creation failed', details: err.message });
+  }
+});
+
+
 // Save crossword endpoint with enhanced error handling
 app.post('/save-crossword', async (req, res) => {
   try {
