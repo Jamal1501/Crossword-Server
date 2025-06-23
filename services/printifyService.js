@@ -13,6 +13,8 @@ export async function getShopId() {
   return data[0]?.id || null;
 }
 export async function uploadImage(imageUrl) {
+  console.log('Uploading image to Printify:', imageUrl);
+
   const res = await fetch(`${baseUrl}uploads/images.json`, {
     method: 'POST',
     headers: {
@@ -25,6 +27,7 @@ export async function uploadImage(imageUrl) {
   if (!res.ok) throw new Error(`Image upload failed: ${res.status}`);
   return await res.json();
 }
+
 
 export async function createProduct({ imageUrl, blueprintId, variantId, x, y, scale }) {
   const uploaded = await uploadImage(imageUrl);
