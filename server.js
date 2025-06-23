@@ -5,7 +5,7 @@ import cors from 'cors';
 import fetch from 'node-fetch';
 
 const app = express();
-const printifyService = require('./services/printifyService');
+import * as printifyService from './services/printifyService.js';
 
 // Enhanced CORS configuration
 const corsOptions = {
