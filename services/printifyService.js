@@ -11,13 +11,14 @@ function authHeaders(extra = {}) {
   return {
     Authorization: `Bearer ${PRINTIFY_API_KEY}`,
     'Content-Type': 'application/json',
+    'User-Agent': 'Crossword-Automation/1.0',
     ...extra,
   };
 }
 
 /**
- * Generic helper that fails loudly and prints the full response body
- * so debugging never becomes a guessing game.
+ * Wrapper around fetch that ALWAYS throws when the response is not ok and
+ * prints the response body in the error so you can actually debug.
  */
 async function safeFetch(url, options = {}) {
   const res = await fetch(url, options);
@@ -25,11 +26,24 @@ async function safeFetch(url, options = {}) {
     const txt = await res.text();
     throw new Error(`${options.method || 'GET'} ${url} → ${res.status}\n${txt}`);
   }
-  // Printify sometimes returns empty bodies (204). Guard for that.
   return res.status === 204 ? null : await res.json();
 }
 
 /* ─── Catalog helpers ────────────────────────────────────────────────────── */
+
+export async function listBlueprints() {
+  const url = `${BASE_URL}/catalog/blueprints.json`;
+  return safeFetch(url, { headers: authHeaders() });
+}
+
+export async function findBlueprintId(keyword = 'mug') {
+  const blueprints = await listBlueprints();
+  const found = blueprints.find(b =>
+    b.title.toLowerCase().includes(keyword.toLowerCase())
+  );
+  if (!found) throw new Error(`No blueprint matching "${keyword}"`);
+  return found.id;
+}
 
 export async function listPrintProviders(blueprintId) {
   const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers.json`;
@@ -54,8 +68,11 @@ export async function getShopId() {
 export async function uploadImage(fileUrl) {
   const url = `${BASE_URL}/uploads/images.json`;
   const body = { file_url: fileUrl };
-  const res = await safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
-  return res; // { id, file_url, ... }
+  return safeFetch(url, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  });
 }
 
 /* ─── Product creation ───────────────────────────────────────────────────── */
@@ -63,35 +80,41 @@ export async function uploadImage(fileUrl) {
 export async function createProduct({
   imageUrl,
   title = 'Crossword Mug',
-  description = 'Auto‑generated crossword design',
+  description = 'Auto-generated crossword design',
   tags = ['Crossword', 'Mug'],
-  blueprintId = 30,      // 11oz ceramic mug
-  printProviderId,       // optional → auto‑select first provider that supports blueprint
-  variantId,             // optional → auto‑select first enabled variant
+  blueprintKeyword = 'Ceramic Mug', // more robust than hard‑coding ID
+  blueprintId,
+  printProviderId,
+  variantId,
   x = 0.5,
   y = 0.5,
   scale = 1.0,
   background = '#ffffff',
   priceCents = 1500,
 }) {
-  /* — 1. Resolve catalog choices if caller didn’t provide them — */
+  /* — 1. Resolve blueprint first — */
+  if (!blueprintId) {
+    blueprintId = await findBlueprintId(blueprintKeyword);
+  }
+
+  /* — 2. Resolve provider / variant — */
   if (!printProviderId) {
     const providers = await listPrintProviders(blueprintId);
-    if (!providers?.length) throw new Error(`No providers found for blueprint ${blueprintId}`);
+    if (!providers?.length) throw new Error(`No providers for blueprint ${blueprintId}`);
     printProviderId = providers[0].id;
   }
 
   if (!variantId) {
     const variants = await listVariants(blueprintId, printProviderId);
-    const enabled = variants?.find(v => v.is_enabled) || variants?.[0];
-    if (!enabled) throw new Error(`No variants found for provider ${printProviderId} & blueprint ${blueprintId}`);
+    const enabled = variants.find(v => v.is_enabled) || variants[0];
+    if (!enabled) throw new Error(`No variants for provider ${printProviderId}`);
     variantId = enabled.id;
   }
 
-  /* — 2. Upload artwork — */
+  /* — 3. Upload artwork — */
   const uploaded = await uploadImage(imageUrl);
 
-  /* — 3. Build product payload — */
+  /* — 4. Prepare product payload — */
   const payload = {
     title,
     description,
@@ -127,13 +150,11 @@ export async function createProduct({
     is_visible: true,
   };
 
-  /* — 4. Fire away — */
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
   return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
 }
 
-/* ─── Convenience endpoint for your Express route ───────────────────────── */
-
+/* ─── Convenience test endpoint — lets your route stay simple ───────────── */
 export async function createTestProduct() {
   return createProduct({
     imageUrl: 'https://images.printify.com/mockup/5eab35e671d9b10001ec9f82.png',
