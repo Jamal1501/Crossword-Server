@@ -24,7 +24,12 @@ export async function uploadImage(imageUrl) {
     body: JSON.stringify({ file_url: imageUrl })
   });
 
-  if (!res.ok) throw new Error(`Image upload failed: ${res.status}`);
+  if (!res.ok) {
+  const errorText = await res.text();
+  console.error('Printify upload error:', errorText);
+  throw new Error(`Image upload failed: ${res.status}`);
+}
+
   return await res.json();
 }
 
