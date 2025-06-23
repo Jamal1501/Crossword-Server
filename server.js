@@ -5,6 +5,7 @@ import cors from 'cors';
 import fetch from 'node-fetch';
 
 const app = express();
+const printifyService = require('./services/printifyService');
 
 // Enhanced CORS configuration
 const corsOptions = {
@@ -40,6 +41,16 @@ app.use((err, req, res, next) => {
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/api/printify/test', async (req, res) => {
+  try {
+    const shopId = await printifyService.getShopId();
+    res.json({ success: true, shopId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Printify API failed', details: err.message });
+  }
 });
 
 // Save crossword endpoint with enhanced error handling
