@@ -55,7 +55,7 @@ app.get('/api/printify/test', async (req, res) => {
 
 app.post('/api/printify/create-test-product', async (req, res) => {
   try {
-    const imageUrl = 'https://res.cloudinary.com/dpe19wze8/image/upload/v1750685860/crosswords/fxwnicjzetg3xmeo9xuy.png';
+    const imageUrl = 'https://images.printify.com/mockup/5eab35e671d9b10001ec9f82.png';
     const blueprintId = 30;
     const variantId = 465;
     const x = 0.5;
