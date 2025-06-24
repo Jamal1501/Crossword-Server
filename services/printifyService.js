@@ -131,6 +131,6 @@ export async function createProduct({
 
 export async function createTestProduct() {
   return createProduct({
-    imageUrl: 'https://images.printify.com/mockup/5eab35e671d9b10001ec9f82.png',
+    imageUrl: 'https://res.cloudinary.com/dpe19wze8/image/upload/v1750685860/crosswords/fxwnicjzetg3xmeo9xuy.png',
   });
 }
