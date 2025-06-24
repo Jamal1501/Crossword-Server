@@ -115,7 +115,7 @@ export async function createProduct({
           {
             position: 'front',
             images: [
-              { id: uploaded.id, x, y, scale },
+              { id: uploaded.id, x, y, scale, angle: 0 },
             ],
           },
         ],
