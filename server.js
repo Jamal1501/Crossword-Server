@@ -3,46 +3,45 @@ import express from 'express';
 import { v2 as cloudinary } from 'cloudinary';
 import cors from 'cors';
 import fetch from 'node-fetch';
-
-const app = express();
 import * as printifyService from './services/printifyService.js';
 
-// Enhanced CORS configuration
+const app = express();
+
+/* ────────────────────────────────────────────────────────── CORS */
 const corsOptions = {
-  origin: true, // Allow all origins temporarily
+  origin: true, // TODO: lock this down in prod
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 };
-
 app.use(cors(corsOptions));
-const port = process.env.PORT || 8888;
 
-// Increase payload limit for base64 images
+/* ─────────────────────────────────────────────── Body parsing */
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Configure Cloudinary
+/* ─────────────────────────────────────────── Cloudinary setup */
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Error handling middleware
+/* ───────────────────────────────────────────── Error handler */
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({
     error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error',
-    details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    details: process.env.NODE_ENV === 'development' ? err.stack : undefined,
   });
 });
 
-// Health check endpoint
+/* ───────────────────────────────────────────── Health check */
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+/* ─────────────────────────────────────── Printify — shop test */
 app.get('/api/printify/test', async (req, res) => {
   try {
     const shopId = await printifyService.getShopId();
@@ -53,153 +52,108 @@ app.get('/api/printify/test', async (req, res) => {
   }
 });
 
-import { createTestProduct } from './services/printifyService.js';
-
+/* ───────────────────────────────────── Printify — test product */
 app.post('/api/printify/create-test-product', async (req, res) => {
   try {
-    const product = await createTestProduct();     // ← one call, zero IDs
-    res.json(product);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-
-    res.json({ success: true, product: result });
+    const product = await printifyService.createTestProduct();
+    res.json({ success: true, product });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Product creation failed', details: err.message });
   }
 });
 
-
-// Save crossword endpoint with enhanced error handling
+/* ─────────────────────────────────────────── Save crossword */
 app.post('/save-crossword', async (req, res) => {
   try {
-    console.log('Received save request');
     const { image } = req.body;
-    
+
     if (!image) {
-      return res.status(400).json({ 
-        error: 'No image data provided',
-        success: false 
-      });
+      return res.status(400).json({ error: 'No image data provided', success: false });
     }
-
     if (!image.startsWith('data:image/')) {
-      return res.status(400).json({ 
-        error: 'Invalid image format',
-        success: false 
-      });
+      return res.status(400).json({ error: 'Invalid image format', success: false });
     }
 
-    console.log('Uploading to Cloudinary...');
     const result = await cloudinary.uploader.upload(image, {
       folder: 'crosswords',
-      timeout: 60000 // 60 seconds timeout
+      timeout: 60000,
     });
-    
-    console.log('Upload successful:', result.secure_url);
-    res.json({ 
-      url: result.secure_url,
-      success: true 
-    });
+
+    res.json({ url: result.secure_url, success: true });
   } catch (error) {
     console.error('Upload error:', error);
-    res.status(500).json({ 
-      error: 'Failed to save image',
-      details: error.message,
-      success: false 
-    });
+    res.status(500).json({ error: 'Failed to save image', details: error.message, success: false });
   }
 });
 
-// Products endpoint with proper error handling
+/* ─────────────────────────────────────────── Products list */
 app.get('/products', async (req, res) => {
   try {
     const [printifyProducts, shopifyProducts] = await Promise.all([
       fetchPrintifyProducts(),
-      fetchShopifyProducts()
+      fetchShopifyProducts(),
     ]);
 
-    const transformedData = transformProducts(printifyProducts, shopifyProducts);
-    res.json(transformedData);
+    const transformed = transformProducts(printifyProducts, shopifyProducts);
+    res.json(transformed);
   } catch (error) {
     console.error('Products error:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch products',
-      details: error.message 
-    });
+    res.status(500).json({ error: 'Failed to fetch products', details: error.message });
   }
 });
 
-// Helper functions
+/* ─────────────────────────────────────── Helper functions */
 async function fetchPrintifyProducts() {
   const response = await fetch(
     `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`,
-    {
-      headers: {
-        'Authorization': `Bearer ${process.env.PRINTIFY_API_KEY}`
-      }
-    }
+    { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } },
   );
-  
-  if (!response.ok) {
-    throw new Error(`Printify API error: ${response.status}`);
-  }
-  
+  if (!response.ok) throw new Error(`Printify API error: ${response.status}`);
   return response.json();
 }
 
 async function fetchShopifyProducts() {
   const response = await fetch(
     `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`,
-    {
-      headers: {
-        'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD
-      }
-    }
+    { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD } },
   );
-  
-  if (!response.ok) {
-    throw new Error(`Shopify API error: ${response.status}`);
-  }
-  
+  if (!response.ok) throw new Error(`Shopify API error: ${response.status}`);
   return response.json();
 }
 
 function transformProducts(printifyData, shopifyData) {
   return {
-    products: printifyData.data.map(printifyProduct => {
-      const shopifyProduct = shopifyData.products.find(p => 
-        p.title.toLowerCase().includes(printifyProduct.title.toLowerCase()) ||
-        printifyProduct.title.toLowerCase().includes(p.title.toLowerCase())
-      );
-
-      return {
-        id: printifyProduct.id,
-        title: printifyProduct.title,
-        image: printifyProduct.images[0]?.src || 'https://via.placeholder.com/150',
-        price: (printifyProduct.variants[0]?.price || 0) / 100,
-        variantId: shopifyProduct?.variants[0]?.id.toString() || '',
-        shopifyProductId: shopifyProduct?.id || ''
-      };
-    }).filter(product => product.variantId)
+    products: printifyData.data
+      .map(p => {
+        const match = shopifyData.products.find(s =>
+          s.title.toLowerCase().includes(p.title.toLowerCase()) ||
+          p.title.toLowerCase().includes(s.title.toLowerCase()),
+        );
+        return {
+          id: p.id,
+          title: p.title,
+          image: p.images[0]?.src || 'https://via.placeholder.com/150',
+          price: (p.variants[0]?.price || 0) / 100,
+          variantId: match?.variants[0]?.id?.toString() || '',
+          shopifyProductId: match?.id || '',
+        };
+      })
+      .filter(prod => prod.variantId),
   };
 }
 
-// Start server with environment check
+/* ────────────────────────────────────────────── Boot server */
+const port = process.env.PORT || 8888;
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${port}`);
-  console.log(`Health check available at http://localhost:${port}/health`);
+  console.log(`Health check → http://localhost:${port}/health`);
 });
 
-// Graceful shutdown
+/* ────────────────────────────────────────── Graceful shutdown */
 process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    console.log('HTTP server closed');
-  });
+  console.log('SIGTERM received: closing HTTP server');
+  server.close(() => console.log('HTTP server closed'));
 });
 
 export default app;
