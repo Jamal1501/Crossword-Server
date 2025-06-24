@@ -54,6 +54,21 @@ app.get('/api/printify/test', async (req, res) => {
   }
 });
 
+/* ─────────────────────────── Get test variantId */
+app.get('/api/printify/test-variant', async (req, res) => {
+  try {
+    const blueprintId = await printifyService.findBlueprintId('mug');
+    const providers = await printifyService.listPrintProviders(blueprintId);
+    const variants = await printifyService.listVariants(blueprintId, providers[0].id);
+    const variant = variants.find(v => v.is_enabled !== false) || variants[0];
+
+    res.json({ variantId: variant.id, title: variant.title });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch variant', details: err.message });
+  }
+});
+
 /* ───────────────────────────────────── Printify — test product */
 app.post('/api/printify/create-test-product', async (req, res) => {
   try {
