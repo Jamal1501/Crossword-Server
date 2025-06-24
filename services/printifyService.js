@@ -11,15 +11,11 @@ function authHeaders(extra = {}) {
   return {
     Authorization: `Bearer ${PRINTIFY_API_KEY}`,
     'Content-Type': 'application/json',
-    'User-Agent': 'Crossword-Automation/1.0',
+    'User-Agent': 'Crossword-Automation/1.2',
     ...extra,
   };
 }
 
-/**
- * Wrapper around fetch that ALWAYS throws when the response is not ok and
- * prints the response body in the error so you can actually debug.
- */
 async function safeFetch(url, options = {}) {
   const res = await fetch(url, options);
   if (!res.ok) {
@@ -29,8 +25,6 @@ async function safeFetch(url, options = {}) {
   return res.status === 204 ? null : await res.json();
 }
 
-/* ─── Catalog helpers ────────────────────────────────────────────────────── */
-
 export async function listBlueprints() {
   const url = `${BASE_URL}/catalog/blueprints.json`;
   return safeFetch(url, { headers: authHeaders() });
@@ -38,9 +32,7 @@ export async function listBlueprints() {
 
 export async function findBlueprintId(keyword = 'mug') {
   const blueprints = await listBlueprints();
-  const found = blueprints.find(b =>
-    b.title.toLowerCase().includes(keyword.toLowerCase())
-  );
+  const found = blueprints.find(b => b.title.toLowerCase().includes(keyword.toLowerCase()));
   if (!found) throw new Error(`No blueprint matching "${keyword}"`);
   return found.id;
 }
@@ -51,11 +43,14 @@ export async function listPrintProviders(blueprintId) {
 }
 
 export async function listVariants(blueprintId, printProviderId) {
-  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
-  return safeFetch(url, { headers: authHeaders() });
+  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json?show-out-of-stock=1`;
+  const raw = await safeFetch(url, { headers: authHeaders() });
+  const variants = Array.isArray(raw) ? raw : (raw.variants || raw.data || []);
+  if (!Array.isArray(variants)) {
+    throw new Error(`Unexpected variants response: ${JSON.stringify(raw).slice(0, 500)}`);
+  }
+  return variants;
 }
-
-/* ─── Shop helpers ───────────────────────────────────────────────────────── */
 
 export async function getShopId() {
   const url = `${BASE_URL}/shops.json`;
@@ -63,26 +58,18 @@ export async function getShopId() {
   return data?.[0]?.id ?? null;
 }
 
-/* ─── Upload artwork ─────────────────────────────────────────────────────── */
-
 export async function uploadImage(fileUrl) {
   const url = `${BASE_URL}/uploads/images.json`;
   const body = { file_url: fileUrl };
-  return safeFetch(url, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify(body),
-  });
+  return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
 }
-
-/* ─── Product creation ───────────────────────────────────────────────────── */
 
 export async function createProduct({
   imageUrl,
   title = 'Crossword Mug',
   description = 'Auto-generated crossword design',
   tags = ['Crossword', 'Mug'],
-  blueprintKeyword = 'Ceramic Mug', // more robust than hard‑coding ID
+  blueprintKeyword = 'Ceramic Mug',
   blueprintId,
   printProviderId,
   variantId,
@@ -92,12 +79,8 @@ export async function createProduct({
   background = '#ffffff',
   priceCents = 1500,
 }) {
-  /* — 1. Resolve blueprint first — */
-  if (!blueprintId) {
-    blueprintId = await findBlueprintId(blueprintKeyword);
-  }
+  if (!blueprintId) blueprintId = await findBlueprintId(blueprintKeyword);
 
-  /* — 2. Resolve provider / variant — */
   if (!printProviderId) {
     const providers = await listPrintProviders(blueprintId);
     if (!providers?.length) throw new Error(`No providers for blueprint ${blueprintId}`);
@@ -105,16 +88,14 @@ export async function createProduct({
   }
 
   if (!variantId) {
-    const variants = await listVariants(blueprintId, printProviderId);
-    const enabled = variants.find(v => v.is_enabled) || variants[0];
-    if (!enabled) throw new Error(`No variants for provider ${printProviderId}`);
+    const variantsArr = await listVariants(blueprintId, printProviderId);
+    if (!variantsArr.length) throw new Error(`No variants returned (provider ${printProviderId})`);
+    const enabled = variantsArr.find(v => v.is_enabled !== false) || variantsArr[0];
     variantId = enabled.id;
   }
 
-  /* — 3. Upload artwork — */
   const uploaded = await uploadImage(imageUrl);
 
-  /* — 4. Prepare product payload — */
   const payload = {
     title,
     description,
@@ -122,11 +103,7 @@ export async function createProduct({
     print_provider_id: printProviderId,
     tags,
     variants: [
-      {
-        id: variantId,
-        price: priceCents,
-        is_enabled: true,
-      },
+      { id: variantId, price: priceCents, is_enabled: true },
     ],
     print_areas: [
       {
@@ -135,12 +112,7 @@ export async function createProduct({
           {
             position: 'front',
             images: [
-              {
-                id: uploaded.id,
-                x,
-                y,
-                scale,
-              },
+              { id: uploaded.id, x, y, scale },
             ],
           },
         ],
@@ -154,7 +126,6 @@ export async function createProduct({
   return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
 }
 
-/* ─── Convenience test endpoint — lets your route stay simple ───────────── */
 export async function createTestProduct() {
   return createProduct({
     imageUrl: 'https://images.printify.com/mockup/5eab35e671d9b10001ec9f82.png',
