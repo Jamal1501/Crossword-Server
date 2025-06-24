@@ -134,3 +134,52 @@ export async function createTestProduct() {
     imageUrl: 'https://res.cloudinary.com/dpe19wze8/image/upload/v1750685860/crosswords/fxwnicjzetg3xmeo9xuy.png',
   });
 }
+
+export async function createOrder({
+  imageUrl,
+  variantId,
+  position = { x: 0.5, y: 0.5, scale: 1.0, angle: 0 },
+  recipient,
+}) {
+  if (!imageUrl || !variantId || !recipient) {
+    throw new Error('Missing required fields: imageUrl, variantId, recipient');
+  }
+
+  const uploaded = await uploadImage(imageUrl);
+
+  const payload = {
+    external_id: `order-${Date.now()}`,
+    label: 'Crossword Custom Order',
+    line_items: [
+      {
+        variant_id: variantId,
+        quantity: 1,
+        print_areas: {
+          front: [
+            {
+              id: uploaded.id,
+              x: position.x,
+              y: position.y,
+              scale: position.scale,
+              angle: position.angle,
+            },
+          ],
+        },
+      },
+    ],
+    shipping_method: 1,
+    send_shipping_notification: true,
+    address_to: {
+      first_name: recipient.name.split(' ')[0],
+      last_name: recipient.name.split(' ').slice(1).join(' ') || '-',
+      email: recipient.email,
+      address1: recipient.address1,
+      city: recipient.city,
+      country: recipient.country,
+      zip: recipient.zip,
+    },
+  };
+
+  const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
+  return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
+}
