@@ -58,14 +58,19 @@ export async function getShopId() {
   return data?.[0]?.id ?? null;
 }
 
-export async function uploadImage(fileUrl) {
+export async function uploadImageFromBase64(base64Image) {
   const url = `${BASE_URL}/uploads/images.json`;
   const body = {
-    url: fileUrl,
+    file: base64Image,
     file_name: 'crossword.png',
   };
-  return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+  return safeFetch(url, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  });
 }
+
 
 export async function createProduct({
   imageUrl,
