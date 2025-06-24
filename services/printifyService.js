@@ -60,7 +60,10 @@ export async function getShopId() {
 
 export async function uploadImage(fileUrl) {
   const url = `${BASE_URL}/uploads/images.json`;
-  const body = { url: fileUrl };
+  const body = {
+    url: fileUrl,
+    file_name: 'crossword.png',
+  };
   return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
 }
 
