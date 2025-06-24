@@ -131,7 +131,7 @@ export async function createProduct({
 
 export async function createTestProduct() {
   return createProduct({
-    imageUrl: 'https://res.cloudinary.com/dpe19wze8/image/upload/v1750685860/crosswords/fxwnicjzetg3xmeo9xuy.png',
+    imageUrl: 'https://res.cloudinary.com/dpe19wze8/image/upload/f_auto,q_auto/v1750685860/crosswords/fxwnicjzetg3xmeo9xuy.png',
   });
 }
 
