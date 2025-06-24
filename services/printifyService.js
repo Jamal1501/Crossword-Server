@@ -102,7 +102,7 @@ export async function createProduct({
     variantId = enabled.id;
   }
 
-  const uploaded = await uploadImage(imageUrl);
+const uploaded = await uploadImageFromBase64(base64Image);
 
   const payload = {
     title,
@@ -141,7 +141,7 @@ export async function createTestProduct() {
 }
 
 export async function createOrder({
-  imageUrl,
+  base64Image,
   variantId,
   position = { x: 0.5, y: 0.5, scale: 1.0, angle: 0 },
   recipient,
