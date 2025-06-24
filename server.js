@@ -53,23 +53,17 @@ app.get('/api/printify/test', async (req, res) => {
   }
 });
 
+import { createTestProduct } from './services/printifyService.js';
+
 app.post('/api/printify/create-test-product', async (req, res) => {
   try {
-    const imageUrl = 'https://images.printify.com/mockup/5eab35e671d9b10001ec9f82.png';
-    const blueprintId = 30;
-    const variantId = 465;
-    const x = 0.5;
-    const y = 0.5;
-    const scale = 1.0;
+    const product = await createTestProduct();     // ← one call, zero IDs
+    res.json(product);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    const result = await printifyService.createProduct({
-      imageUrl,
-      blueprintId,
-      variantId,
-      x,
-      y,
-      scale
-    });
 
     res.json({ success: true, product: result });
   } catch (err) {
