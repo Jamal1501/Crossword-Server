@@ -68,13 +68,13 @@ app.post('/api/printify/create-test-product', async (req, res) => {
 /* ───────────────────────────────────── Printify — create order */
 app.post('/api/printify/order', async (req, res) => {
   try {
-    const { imageUrl, variantId, position, recipient } = req.body;
+    const { base64Image, variantId, position, recipient } = req.body;
 
-    if (!imageUrl || !variantId || !recipient) {
+    if (!base64Image || !variantId || !recipient) {
       return res.status(400).json({ error: 'Missing required fields', success: false });
     }
 
-    const order = await createOrder({ imageUrl, variantId, position, recipient });
+    const order = await createOrder({ base64Image, variantId, position, recipient });
     res.json({ success: true, order });
   } catch (err) {
     console.error('Order creation failed:', err);
