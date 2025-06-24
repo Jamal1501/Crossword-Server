@@ -150,7 +150,7 @@ export async function createOrder({
     throw new Error('Missing required fields: imageUrl, variantId, recipient');
   }
 
-  const uploaded = await uploadImage(imageUrl);
+const uploaded = await uploadImageFromBase64(base64Image);
 
   const payload = {
     external_id: `order-${Date.now()}`,
