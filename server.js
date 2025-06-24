@@ -5,6 +5,8 @@ import cors from 'cors';
 import fetch from 'node-fetch';
 import * as printifyService from './services/printifyService.js';
 
+const { createOrder } = printifyService;
+
 const app = express();
 
 /* ────────────────────────────────────────────────────────── CORS */
@@ -60,6 +62,23 @@ app.post('/api/printify/create-test-product', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Product creation failed', details: err.message });
+  }
+});
+
+/* ───────────────────────────────────── Printify — create order */
+app.post('/api/printify/order', async (req, res) => {
+  try {
+    const { imageUrl, variantId, position, recipient } = req.body;
+
+    if (!imageUrl || !variantId || !recipient) {
+      return res.status(400).json({ error: 'Missing required fields', success: false });
+    }
+
+    const order = await createOrder({ imageUrl, variantId, position, recipient });
+    res.json({ success: true, order });
+  } catch (err) {
+    console.error('Order creation failed:', err);
+    res.status(500).json({ error: 'Order creation failed', details: err.message });
   }
 });
 
