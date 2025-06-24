@@ -59,24 +59,15 @@ export async function getShopId() {
 }
 
 export async function uploadImageFromBase64(base64Image) {
-  const url = `${BASE_URL}/uploads/images.json`;
-
-  // Clean the base64: remove the "data:image/png;base64," part if it exists
-  const cleanedBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
-
-  // Optional: short test image if needed
-  // const cleanedBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII=';
+  const base64 = base64Image.split(',')[1]; // remove the data:image/png;base64, part
 
   const body = {
-    contents: cleanedBase64,
+    contents: base64,
     file_name: 'crossword.png',
   };
 
-  return safeFetch(url, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify(body),
-  });
+  const url = `${BASE_URL}/uploads/images.json`;
+  return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
 }
 
 
