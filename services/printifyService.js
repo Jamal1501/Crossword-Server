@@ -146,8 +146,8 @@ export async function createOrder({
   position = { x: 0.5, y: 0.5, scale: 1.0, angle: 0 },
   recipient,
 }) {
-  if (!imageUrl || !variantId || !recipient) {
-    throw new Error('Missing required fields: imageUrl, variantId, recipient');
+  if (!base64Image || !variantId || !recipient) {
+    throw new Error('Missing required fields: base64Image, variantId, recipient');
   }
 
 const uploaded = await uploadImageFromBase64(base64Image);
