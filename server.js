@@ -14,7 +14,7 @@ const app = express();
 
 // Shopify raw body middleware for HMAC verification
 app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json' }));
-app.use(bodyParser.json());
+
 
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
@@ -99,7 +99,7 @@ app.post('/webhooks/orders/create', async (req, res) => {
   await handlePrintifyOrder(order);
   res.status(200).send('Webhook received');
 });
-
+app.use(bodyParser.json());
 
 const corsOptions = {
   origin: true,
