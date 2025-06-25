@@ -18,7 +18,7 @@ const corsOptions = {
 };
 app.use(cors(corsOptions));
 
-/* ─────────────────────────────────────────────── Body parsing */
+/* ─────────────────────────────────────────────── Body parsing */
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -80,16 +80,41 @@ app.post('/api/printify/create-test-product', async (req, res) => {
   }
 });
 
-/* ───────────────────────────────────── Printify — create order */
+/* ───────────────────────────────────── NEW: Printify — create order with URL */
 app.post('/api/printify/order', async (req, res) => {
   try {
-    const { base64Image, variantId, position, recipient } = req.body;
+    const { imageUrl, base64Image, variantId, position, recipient } = req.body;
 
-    if (!base64Image || !variantId || !recipient) {
-      return res.status(400).json({ error: 'Missing required fields', success: false });
+    // Prioritize imageUrl over base64Image
+    if (!imageUrl && !base64Image) {
+      return res.status(400).json({ 
+        error: 'Either imageUrl or base64Image is required', 
+        success: false 
+      });
     }
 
-    const order = await createOrder({ base64Image, variantId, position, recipient });
+    if (!variantId || !recipient) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: variantId, recipient', 
+        success: false 
+      });
+    }
+
+    console.log('Creating order with:', {
+      hasImageUrl: !!imageUrl,
+      hasBase64: !!base64Image,
+      variantId,
+      recipient: recipient.name
+    });
+
+    const order = await createOrder({ 
+      imageUrl, // Use imageUrl if provided
+      base64Image, // Fallback to base64Image
+      variantId, 
+      position, 
+      recipient 
+    });
+    
     res.json({ success: true, order });
   } catch (err) {
     console.error('Order creation failed:', err);
@@ -114,10 +139,43 @@ app.post('/save-crossword', async (req, res) => {
       timeout: 60000,
     });
 
-    res.json({ url: result.secure_url, success: true });
+    // Return both the URL and success flag
+    res.json({ 
+      url: result.secure_url, 
+      success: true,
+      public_id: result.public_id // Useful for future reference
+    });
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ error: 'Failed to save image', details: error.message, success: false });
+  }
+});
+
+/* ─────────────────────────────────── NEW: Direct order from Cloudinary URL */
+app.post('/api/printify/order-from-url', async (req, res) => {
+  try {
+    const { cloudinaryUrl, variantId, position, recipient } = req.body;
+
+    if (!cloudinaryUrl || !variantId || !recipient) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: cloudinaryUrl, variantId, recipient', 
+        success: false 
+      });
+    }
+
+    console.log('Creating order directly from Cloudinary URL:', cloudinaryUrl);
+
+    const order = await createOrder({ 
+      imageUrl: cloudinaryUrl, 
+      variantId, 
+      position, 
+      recipient 
+    });
+    
+    res.json({ success: true, order });
+  } catch (err) {
+    console.error('Order creation failed:', err);
+    res.status(500).json({ error: 'Order creation failed', details: err.message });
   }
 });
 
