@@ -176,11 +176,15 @@ export async function createOrder({
   console.log('Image uploaded successfully:', uploaded.id);
 
   const shopProductsUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
-  const products = await safeFetch(shopProductsUrl, { headers: authHeaders() });
+  const response = await safeFetch(shopProductsUrl, { headers: authHeaders() });
+
+  if (!Array.isArray(response)) {
+    throw new Error(`Expected an array of products but got: ${JSON.stringify(response).slice(0, 500)}`);
+  }
 
   let printProviderId = null;
-  for (const product of products) {
-    const variant = product.variants.find(v => v.id === parseInt(variantId));
+  for (const product of response) {
+    const variant = product.variants?.find(v => v.id === parseInt(variantId));
     if (variant) {
       printProviderId = product.print_provider_id;
       break;
