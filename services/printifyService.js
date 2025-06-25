@@ -59,20 +59,68 @@ export async function getShopId() {
 }
 
 export async function uploadImageFromBase64(base64Image) {
-  const base64 = base64Image.split(',')[1]; // remove the data:image/png;base64, part
+  try {
+    // Validate input
+    if (!base64Image || typeof base64Image !== 'string') {
+      throw new Error('Invalid base64Image input');
+    }
 
-  const body = {
-    contents: base64,
-    file_name: 'crossword.png',
-  };
+    // Handle data URL format (data:image/png;base64,xxxxx)
+    let base64Content;
+    let mimeType = 'image/png'; // default
+    
+    if (base64Image.startsWith('data:')) {
+      const [header, content] = base64Image.split(',');
+      if (!content) {
+        throw new Error('Invalid data URL format');
+      }
+      base64Content = content;
+      
+      // Extract mime type from header
+      const mimeMatch = header.match(/data:([^;]+)/);
+      if (mimeMatch) {
+        mimeType = mimeMatch[1];
+      }
+    } else {
+      // Assume it's already base64 content
+      base64Content = base64Image;
+    }
 
-  const url = `${BASE_URL}/uploads/images.json`;
-  return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(body) });
+    // Validate base64 content
+    if (!base64Content || base64Content.length === 0) {
+      throw new Error('Empty base64 content');
+    }
+
+    // Generate unique filename with proper extension
+    const timestamp = Date.now();
+    const extension = mimeType.split('/')[1] || 'png';
+    const fileName = `crossword_${timestamp}.${extension}`;
+
+    console.log(`Uploading image: ${fileName}, size: ${base64Content.length} chars, type: ${mimeType}`);
+
+    const body = {
+      contents: base64Content,
+      file_name: fileName,
+    };
+
+    const url = `${BASE_URL}/uploads/images.json`;
+    const result = await safeFetch(url, { 
+      method: 'POST', 
+      headers: authHeaders(), 
+      body: JSON.stringify(body) 
+    });
+
+    console.log('Upload successful:', result);
+    return result;
+
+  } catch (error) {
+    console.error('Image upload failed:', error);
+    throw new Error(`Image upload failed: ${error.message}`);
+  }
 }
 
-
 export async function createProduct({
-  imageUrl,
+  base64Image, // Changed from imageUrl to base64Image
   title = 'Crossword Mug',
   description = 'Auto-generated crossword design',
   tags = ['Crossword', 'Mug'],
@@ -101,7 +149,7 @@ export async function createProduct({
     variantId = enabled.id;
   }
 
-const uploaded = await uploadImageFromBase64(base64Image);
+  const uploaded = await uploadImageFromBase64(base64Image);
 
   const payload = {
     title,
@@ -134,8 +182,11 @@ const uploaded = await uploadImageFromBase64(base64Image);
 }
 
 export async function createTestProduct() {
+  // Create a simple test base64 image (1x1 red pixel)
+  const testBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+  
   return createProduct({
-    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/7/77/Delete_key1.jpg',
+    base64Image: testBase64,
   });
 }
 
@@ -149,14 +200,23 @@ export async function createOrder({
     throw new Error('Missing required fields: base64Image, variantId, recipient');
   }
 
-const uploaded = await uploadImageFromBase64(base64Image);
+  console.log('Creating order with:', {
+    hasImage: !!base64Image,
+    imageLength: base64Image.length,
+    variantId,
+    recipient: recipient.name
+  });
+
+  const uploaded = await uploadImageFromBase64(base64Image);
+  
+  console.log('Image uploaded successfully:', uploaded.id);
 
   const payload = {
     external_id: `order-${Date.now()}`,
     label: 'Crossword Custom Order',
     line_items: [
       {
-        variant_id: variantId,
+        variant_id: parseInt(variantId), // Ensure it's a number
         quantity: 1,
         print_areas: {
           front: [
@@ -183,6 +243,8 @@ const uploaded = await uploadImageFromBase64(base64Image);
       zip: recipient.zip,
     },
   };
+
+  console.log('Creating order with payload:', JSON.stringify(payload, null, 2));
 
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
   return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
