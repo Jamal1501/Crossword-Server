@@ -4,6 +4,8 @@ import { v2 as cloudinary } from 'cloudinary';
 import cors from 'cors';
 import fetch from 'node-fetch';
 import * as printifyService from './services/printifyService.js';
+import { safeFetch } from './services/printifyService.js';
+
 
 const { createOrder } = printifyService;
 
@@ -194,6 +196,25 @@ app.get('/products', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch products', details: error.message });
   }
 });
+
+/* ─────────────────────────────────────── Helper functions */
+
+app.get('/api/printify/products', async (req, res) => {
+  try {
+    const url = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`;
+    const products = await safeFetch(url, {
+      headers: {
+        Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    res.json(products);
+  } catch (err) {
+    console.error('Error fetching products:', err.message);
+    res.status(500).json({ error: 'Failed to fetch products', details: err.message });
+  }
+});
+
 
 /* ─────────────────────────────────────── Helper functions */
 async function fetchPrintifyProducts() {
