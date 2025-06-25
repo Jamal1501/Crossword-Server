@@ -15,7 +15,6 @@ const app = express();
 // Shopify raw body middleware for HMAC verification
 app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json' }));
 
-
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
 async function handlePrintifyOrder(order) {
@@ -47,7 +46,7 @@ async function handlePrintifyOrder(order) {
     if (!printifyVariantId) {
       console.warn('❌ No Printify variant ID found for Shopify variant:', item.variant_id);
       continue;
-    } // TODO: resolve based on Shopify variant
+    }
 
     const position = {
       x: 0.5, // TODO: calculate from design_specs
@@ -99,7 +98,10 @@ app.post('/webhooks/orders/create', async (req, res) => {
   await handlePrintifyOrder(order);
   res.status(200).send('Webhook received');
 });
+
+// All other middleware comes after webhook
 app.use(bodyParser.json());
+
 
 const corsOptions = {
   origin: true,
