@@ -89,7 +89,7 @@ app.post('/webhooks/orders/create', async (req, res) => {
 
   const digest = crypto
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(rawBody, 'utf8')
+    .update(rawBody)
     .digest('base64');
 
   console.log('CALCULATED DIGEST:', digest);
