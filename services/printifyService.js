@@ -240,3 +240,4 @@ export async function createOrder({
     body: JSON.stringify(payload)
   });
 }
+export { safeFetch };
