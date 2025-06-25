@@ -58,16 +58,52 @@ export async function getShopId() {
   return data?.[0]?.id ?? null;
 }
 
+// NEW: Upload image from URL (much better than base64!)
+export async function uploadImageFromUrl(imageUrl) {
+  try {
+    if (!imageUrl || typeof imageUrl !== 'string') {
+      throw new Error('Invalid imageUrl input');
+    }
+
+    // Validate URL format
+    try {
+      new URL(imageUrl);
+    } catch {
+      throw new Error('Invalid URL format');
+    }
+
+    console.log(`Uploading image from URL: ${imageUrl}`);
+
+    const body = {
+      url: imageUrl,
+      file_name: `crossword_${Date.now()}.png`,
+    };
+
+    const url = `${BASE_URL}/uploads/images.json`;
+    const result = await safeFetch(url, { 
+      method: 'POST', 
+      headers: authHeaders(), 
+      body: JSON.stringify(body) 
+    });
+
+    console.log('Upload successful:', result);
+    return result;
+
+  } catch (error) {
+    console.error('Image upload failed:', error);
+    throw new Error(`Image upload failed: ${error.message}`);
+  }
+}
+
+// LEGACY: Keep base64 upload as fallback
 export async function uploadImageFromBase64(base64Image) {
   try {
-    // Validate input
     if (!base64Image || typeof base64Image !== 'string') {
       throw new Error('Invalid base64Image input');
     }
 
-    // Handle data URL format (data:image/png;base64,xxxxx)
     let base64Content;
-    let mimeType = 'image/png'; // default
+    let mimeType = 'image/png';
     
     if (base64Image.startsWith('data:')) {
       const [header, content] = base64Image.split(',');
@@ -76,22 +112,18 @@ export async function uploadImageFromBase64(base64Image) {
       }
       base64Content = content;
       
-      // Extract mime type from header
       const mimeMatch = header.match(/data:([^;]+)/);
       if (mimeMatch) {
         mimeType = mimeMatch[1];
       }
     } else {
-      // Assume it's already base64 content
       base64Content = base64Image;
     }
 
-    // Validate base64 content
     if (!base64Content || base64Content.length === 0) {
       throw new Error('Empty base64 content');
     }
 
-    // Generate unique filename with proper extension
     const timestamp = Date.now();
     const extension = mimeType.split('/')[1] || 'png';
     const fileName = `crossword_${timestamp}.${extension}`;
@@ -120,7 +152,8 @@ export async function uploadImageFromBase64(base64Image) {
 }
 
 export async function createProduct({
-  base64Image, // Changed from imageUrl to base64Image
+  imageUrl, // NEW: Use imageUrl instead of base64Image
+  base64Image, // LEGACY: Keep for backward compatibility
   title = 'Crossword Mug',
   description = 'Auto-generated crossword design',
   tags = ['Crossword', 'Mug'],
@@ -149,7 +182,15 @@ export async function createProduct({
     variantId = enabled.id;
   }
 
-  const uploaded = await uploadImageFromBase64(base64Image);
+  // Use URL upload if available, fallback to base64
+  let uploaded;
+  if (imageUrl) {
+    uploaded = await uploadImageFromUrl(imageUrl);
+  } else if (base64Image) {
+    uploaded = await uploadImageFromBase64(base64Image);
+  } else {
+    throw new Error('Either imageUrl or base64Image must be provided');
+  }
 
   const payload = {
     title,
@@ -182,32 +223,39 @@ export async function createProduct({
 }
 
 export async function createTestProduct() {
-  // Create a simple test base64 image (1x1 red pixel)
-  const testBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+  // Use a public test image URL
+  const testImageUrl = 'https://via.placeholder.com/300x300/ff0000/ffffff?text=TEST';
   
   return createProduct({
-    base64Image: testBase64,
+    imageUrl: testImageUrl,
   });
 }
 
 export async function createOrder({
-  base64Image,
+  imageUrl, // NEW: Use imageUrl instead of base64Image
+  base64Image, // LEGACY: Keep for backward compatibility
   variantId,
   position = { x: 0.5, y: 0.5, scale: 1.0, angle: 0 },
   recipient,
 }) {
-  if (!base64Image || !variantId || !recipient) {
-    throw new Error('Missing required fields: base64Image, variantId, recipient');
+  if ((!imageUrl && !base64Image) || !variantId || !recipient) {
+    throw new Error('Missing required fields: imageUrl/base64Image, variantId, recipient');
   }
 
   console.log('Creating order with:', {
-    hasImage: !!base64Image,
-    imageLength: base64Image.length,
+    hasImageUrl: !!imageUrl,
+    hasBase64: !!base64Image,
     variantId,
     recipient: recipient.name
   });
 
-  const uploaded = await uploadImageFromBase64(base64Image);
+  // Use URL upload if available, fallback to base64
+  let uploaded;
+  if (imageUrl) {
+    uploaded = await uploadImageFromUrl(imageUrl);
+  } else if (base64Image) {
+    uploaded = await uploadImageFromBase64(base64Image);
+  }
   
   console.log('Image uploaded successfully:', uploaded.id);
 
@@ -216,7 +264,7 @@ export async function createOrder({
     label: 'Crossword Custom Order',
     line_items: [
       {
-        variant_id: parseInt(variantId), // Ensure it's a number
+        variant_id: parseInt(variantId),
         quantity: 1,
         print_areas: {
           front: [
