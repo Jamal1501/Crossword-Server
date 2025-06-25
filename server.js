@@ -25,7 +25,7 @@ async function handlePrintifyOrder(order) {
 
     return {
       title: item.title,
-      variant_id: item.variant_id, // Shopify variant ID, to be mapped
+      variant_id: item.variant_id,
       custom_image,
       design_specs
     };
@@ -38,8 +38,8 @@ async function handlePrintifyOrder(order) {
     }
 
     const VARIANT_MAP = {
-      '51220006142281': '674069a6ac141e32aa0ff778', // Greeting Cards
-      '51300750754121': '6740694e665f07692704a7eb', // Holiday Cards
+      '51220006142281': '674069a6ac141e32aa0ff778',
+      '51300750754121': '6740694e665f07692704a7eb',
     };
 
     const printifyVariantId = VARIANT_MAP[item.variant_id];
@@ -49,7 +49,7 @@ async function handlePrintifyOrder(order) {
     }
 
     const position = {
-      x: 0.5, // TODO: calculate from design_specs
+      x: 0.5,
       y: 0.5,
       scale: 1.0,
       angle: 0
@@ -88,6 +88,10 @@ app.post('/webhooks/orders/create', async (req, res) => {
     .update(rawBody, 'utf8')
     .digest('base64');
 
+  console.log('RAW BODY:', rawBody.toString());
+  console.log('CALCULATED DIGEST:', digest);
+  console.log('SHOPIFY HMAC HEADER:', hmac);
+
   if (digest !== hmac) {
     console.warn('⚠️ Webhook HMAC verification failed.');
     return res.status(401).send('HMAC validation failed');
@@ -101,6 +105,7 @@ app.post('/webhooks/orders/create', async (req, res) => {
 
 // All other middleware comes after webhook
 app.use(bodyParser.json());
+
 
 
 const corsOptions = {
