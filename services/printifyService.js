@@ -25,127 +25,58 @@ async function safeFetch(url, options = {}) {
   return res.status === 204 ? null : await res.json();
 }
 
-export async function listBlueprints() {
-  const url = `${BASE_URL}/catalog/blueprints.json`;
-  return safeFetch(url, { headers: authHeaders() });
-}
-
-export async function findBlueprintId(keyword = 'mug') {
-  const blueprints = await listBlueprints();
-  const found = blueprints.find(b => b.title.toLowerCase().includes(keyword.toLowerCase()));
-  if (!found) throw new Error(`No blueprint matching "${keyword}"`);
-  return found.id;
-}
-
-export async function listPrintProviders(blueprintId) {
-  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers.json`;
-  return safeFetch(url, { headers: authHeaders() });
-}
-
-export async function listVariants(blueprintId, printProviderId) {
-  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json?show-out-of-stock=1`;
-  const raw = await safeFetch(url, { headers: authHeaders() });
-  const variants = Array.isArray(raw) ? raw : (raw.variants || raw.data || []);
-  if (!Array.isArray(variants)) {
-    throw new Error(`Unexpected variants response: ${JSON.stringify(raw).slice(0, 500)}`);
-  }
-  return variants;
-}
-
-export async function getShopId() {
-  const url = `${BASE_URL}/shops.json`;
-  const data = await safeFetch(url, { headers: authHeaders() });
-  return data?.[0]?.id ?? null;
-}
-
 export async function uploadImageFromUrl(imageUrl) {
-  try {
-    if (!imageUrl || typeof imageUrl !== 'string') {
-      throw new Error('Invalid imageUrl input');
-    }
-
-    try {
-      new URL(imageUrl);
-    } catch {
-      throw new Error('Invalid URL format');
-    }
-
-    console.log(`Uploading image from URL: ${imageUrl}`);
-
-    const body = {
-      url: imageUrl,
-      file_name: `crossword_${Date.now()}.png`,
-    };
-
-    const url = `${BASE_URL}/uploads/images.json`;
-    const result = await safeFetch(url, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(body)
-    });
-
-    console.log('Upload successful:', result);
-    return result;
-
-  } catch (error) {
-    console.error('Image upload failed:', error);
-    throw new Error(`Image upload failed: ${error.message}`);
+  if (!imageUrl || typeof imageUrl !== 'string') {
+    throw new Error('Invalid imageUrl input');
   }
+  try {
+    new URL(imageUrl);
+  } catch {
+    throw new Error('Invalid URL format');
+  }
+  const body = {
+    url: imageUrl,
+    file_name: `crossword_${Date.now()}.png`,
+  };
+  const url = `${BASE_URL}/uploads/images.json`;
+  return safeFetch(url, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(body)
+  });
 }
 
 export async function uploadImageFromBase64(base64Image) {
-  try {
-    if (!base64Image || typeof base64Image !== 'string') {
-      throw new Error('Invalid base64Image input');
-    }
-
-    let base64Content;
-    let mimeType = 'image/png';
-
-    if (base64Image.startsWith('data:')) {
-      const [header, content] = base64Image.split(',');
-      if (!content) {
-        throw new Error('Invalid data URL format');
-      }
-      base64Content = content;
-
-      const mimeMatch = header.match(/data:([^;]+)/);
-      if (mimeMatch) {
-        mimeType = mimeMatch[1];
-      }
-    } else {
-      base64Content = base64Image;
-    }
-
-    if (!base64Content || base64Content.length === 0) {
-      throw new Error('Empty base64 content');
-    }
-
-    const timestamp = Date.now();
-    const extension = mimeType.split('/')[1] || 'png';
-    const fileName = `crossword_${timestamp}.${extension}`;
-
-    console.log(`Uploading image: ${fileName}, size: ${base64Content.length} chars, type: ${mimeType}`);
-
-    const body = {
-      contents: base64Content,
-      file_name: fileName,
-    };
-
-    const url = `${BASE_URL}/uploads/images.json`;
-    const result = await safeFetch(url, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(body)
-    });
-
-    console.log('Upload successful:', result);
-    return result;
-
-  } catch (error) {
-    console.error('Image upload failed:', error);
-    throw new Error(`Image upload failed: ${error.message}`);
+  if (!base64Image || typeof base64Image !== 'string') {
+    throw new Error('Invalid base64Image input');
   }
+  let base64Content;
+  let mimeType = 'image/png';
+  if (base64Image.startsWith('data:')) {
+    const [header, content] = base64Image.split(',');
+    if (!content) throw new Error('Invalid data URL format');
+    base64Content = content;
+    const mimeMatch = header.match(/data:([^;]+)/);
+    if (mimeMatch) mimeType = mimeMatch[1];
+  } else {
+    base64Content = base64Image;
+  }
+  if (!base64Content.length) {
+    throw new Error('Empty base64 content');
+  }
+  const timestamp = Date.now();
+  const extension = mimeType.split('/')[1] || 'png';
+  const fileName = `crossword_${timestamp}.${extension}`;
+  const body = {
+    contents: base64Content,
+    file_name: fileName,
+  };
+  const url = `${BASE_URL}/uploads/images.json`;
+  return safeFetch(url, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(body)
+  });
 }
 
 export async function createOrder({
@@ -159,13 +90,6 @@ export async function createOrder({
     throw new Error('Missing required fields: imageUrl/base64Image, variantId, recipient');
   }
 
-  console.log('Creating order with:', {
-    hasImageUrl: !!imageUrl,
-    hasBase64: !!base64Image,
-    variantId,
-    recipient: recipient.name
-  });
-
   let uploaded;
   if (imageUrl) {
     uploaded = await uploadImageFromUrl(imageUrl);
@@ -173,30 +97,28 @@ export async function createOrder({
     uploaded = await uploadImageFromBase64(base64Image);
   }
 
-  console.log('Image uploaded successfully:', uploaded.id);
-
   const shopProductsUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
   const response = await safeFetch(shopProductsUrl, { headers: authHeaders() });
-
   const products = Array.isArray(response.data) ? response.data : response;
-
   if (!Array.isArray(products)) {
     throw new Error(`Expected products to be an array but got: ${JSON.stringify(response).slice(0, 500)}`);
   }
 
+  let product = null;
   let printProviderId = null;
   let blueprintId = null;
 
   for (const p of products) {
     const variant = p.variants?.find(v => v.id === parseInt(variantId));
     if (variant) {
+      product = p;
       printProviderId = p.print_provider_id;
       blueprintId = p.blueprint_id;
       break;
     }
   }
 
-  if (!printProviderId || !blueprintId) {
+  if (!printProviderId || !blueprintId || !product) {
     throw new Error(`Unable to resolve print_provider_id or blueprint_id for variant ${variantId}`);
   }
 
@@ -209,17 +131,25 @@ export async function createOrder({
         quantity: 1,
         print_provider_id: printProviderId,
         blueprint_id: blueprintId,
-        print_areas: {
-          front: [
-            {
-              id: uploaded.id,
-              x: position.x,
-              y: position.y,
-              scale: position.scale,
-              angle: position.angle,
-            },
-          ],
-        },
+        print_areas: [
+          {
+            variant_ids: [parseInt(variantId)],
+            placeholders: [
+              {
+                position: 'front',
+                images: [
+                  {
+                    id: uploaded.id,
+                    x: position.x,
+                    y: position.y,
+                    scale: position.scale,
+                    angle: position.angle,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
       },
     ],
     shipping_method: 1,
@@ -234,8 +164,6 @@ export async function createOrder({
       zip: recipient.zip,
     },
   };
-
-  console.log('Creating order with payload:', JSON.stringify(payload, null, 2));
 
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
   return safeFetch(url, {
