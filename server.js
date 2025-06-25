@@ -38,8 +38,16 @@ async function handlePrintifyOrder(order) {
       continue;
     }
 
-    // Placeholder mapping logic – replace with actual Printify variant lookup
-    const printifyVariantId = 123456; // TODO: resolve based on Shopify variant
+    const VARIANT_MAP = {
+      '51220006142281': '674069a6ac141e32aa0ff778', // Greeting Cards
+      '51300750754121': '6740694e665f07692704a7eb', // Holiday Cards
+    };
+
+    const printifyVariantId = VARIANT_MAP[item.variant_id];
+    if (!printifyVariantId) {
+      console.warn('❌ No Printify variant ID found for Shopify variant:', item.variant_id);
+      continue;
+    } // TODO: resolve based on Shopify variant
 
     const position = {
       x: 0.5, // TODO: calculate from design_specs
@@ -91,7 +99,6 @@ app.post('/webhooks/orders/create', async (req, res) => {
   await handlePrintifyOrder(order);
   res.status(200).send('Webhook received');
 });
-
 
 
 const corsOptions = {
