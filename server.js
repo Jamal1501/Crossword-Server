@@ -83,16 +83,15 @@ app.post('/webhooks/orders/create', async (req, res) => {
   const hmac = req.headers['x-shopify-hmac-sha256'];
   const rawBody = req.body;
 
-  const digest = crypto
-    console.log('SECRET IN USE:', SHOPIFY_WEBHOOK_SECRET);
-console.log('RAW BODY STRING:', rawBody.toString());
-console.log('RAW BODY BUFFER:', rawBody);
+  console.log('SECRET IN USE:', SHOPIFY_WEBHOOK_SECRET);
+  console.log('RAW BODY STRING:', rawBody.toString());
+  console.log('RAW BODY BUFFER:', rawBody);
 
+  const digest = crypto
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
     .update(rawBody, 'utf8')
     .digest('base64');
 
-  console.log('RAW BODY:', rawBody.toString());
   console.log('CALCULATED DIGEST:', digest);
   console.log('SHOPIFY HMAC HEADER:', hmac);
 
