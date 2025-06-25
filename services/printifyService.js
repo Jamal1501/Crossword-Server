@@ -178,12 +178,14 @@ export async function createOrder({
   const shopProductsUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
   const response = await safeFetch(shopProductsUrl, { headers: authHeaders() });
 
-  if (!Array.isArray(response)) {
-    throw new Error(`Expected an array of products but got: ${JSON.stringify(response).slice(0, 500)}`);
+  const products = Array.isArray(response.data) ? response.data : response;
+
+  if (!Array.isArray(products)) {
+    throw new Error(`Expected products to be an array but got: ${JSON.stringify(response).slice(0, 500)}`);
   }
 
   let printProviderId = null;
-  for (const product of response) {
+  for (const product of products) {
     const variant = product.variants?.find(v => v.id === parseInt(variantId));
     if (variant) {
       printProviderId = product.print_provider_id;
