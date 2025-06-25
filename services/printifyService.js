@@ -131,25 +131,18 @@ export async function createOrder({
         quantity: 1,
         print_provider_id: printProviderId,
         blueprint_id: blueprintId,
-        print_areas: [
-          {
-            variant_ids: [parseInt(variantId)],
-            placeholders: [
-              {
-                position: 'front',
-                images: [
-                  {
-                    src: uploaded.preview_url,
-                    x: position.x,
-                    y: position.y,
-                    scale: position.scale,
-                    angle: position.angle,
-                  },
-                ],
-              },
-            ],
-          },
-        ],
+        print_areas: {
+  front: [
+    {
+      src: uploaded.preview_url,
+      x: position.x,
+      y: position.y,
+      scale: position.scale,
+      angle: position.angle,
+    },
+  ],
+},
+
       },
     ],
     shipping_method: 1,
