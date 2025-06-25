@@ -84,6 +84,10 @@ app.post('/webhooks/orders/create', async (req, res) => {
   const rawBody = req.body;
 
   const digest = crypto
+    console.log('SECRET IN USE:', SHOPIFY_WEBHOOK_SECRET);
+console.log('RAW BODY STRING:', rawBody.toString());
+console.log('RAW BODY BUFFER:', rawBody);
+
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
     .update(rawBody, 'utf8')
     .digest('base64');
