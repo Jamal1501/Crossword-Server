@@ -58,14 +58,12 @@ export async function getShopId() {
   return data?.[0]?.id ?? null;
 }
 
-// NEW: Upload image from URL (much better than base64!)
 export async function uploadImageFromUrl(imageUrl) {
   try {
     if (!imageUrl || typeof imageUrl !== 'string') {
       throw new Error('Invalid imageUrl input');
     }
 
-    // Validate URL format
     try {
       new URL(imageUrl);
     } catch {
@@ -80,10 +78,10 @@ export async function uploadImageFromUrl(imageUrl) {
     };
 
     const url = `${BASE_URL}/uploads/images.json`;
-    const result = await safeFetch(url, { 
-      method: 'POST', 
-      headers: authHeaders(), 
-      body: JSON.stringify(body) 
+    const result = await safeFetch(url, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(body)
     });
 
     console.log('Upload successful:', result);
@@ -95,7 +93,6 @@ export async function uploadImageFromUrl(imageUrl) {
   }
 }
 
-// LEGACY: Keep base64 upload as fallback
 export async function uploadImageFromBase64(base64Image) {
   try {
     if (!base64Image || typeof base64Image !== 'string') {
@@ -104,14 +101,14 @@ export async function uploadImageFromBase64(base64Image) {
 
     let base64Content;
     let mimeType = 'image/png';
-    
+
     if (base64Image.startsWith('data:')) {
       const [header, content] = base64Image.split(',');
       if (!content) {
         throw new Error('Invalid data URL format');
       }
       base64Content = content;
-      
+
       const mimeMatch = header.match(/data:([^;]+)/);
       if (mimeMatch) {
         mimeType = mimeMatch[1];
@@ -136,10 +133,10 @@ export async function uploadImageFromBase64(base64Image) {
     };
 
     const url = `${BASE_URL}/uploads/images.json`;
-    const result = await safeFetch(url, { 
-      method: 'POST', 
-      headers: authHeaders(), 
-      body: JSON.stringify(body) 
+    const result = await safeFetch(url, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(body)
     });
 
     console.log('Upload successful:', result);
@@ -151,89 +148,9 @@ export async function uploadImageFromBase64(base64Image) {
   }
 }
 
-export async function createProduct({
-  imageUrl, // NEW: Use imageUrl instead of base64Image
-  base64Image, // LEGACY: Keep for backward compatibility
-  title = 'Crossword Mug',
-  description = 'Auto-generated crossword design',
-  tags = ['Crossword', 'Mug'],
-  blueprintKeyword = 'Ceramic Mug',
-  blueprintId,
-  printProviderId,
-  variantId,
-  x = 0.5,
-  y = 0.5,
-  scale = 1.0,
-  background = '#ffffff',
-  priceCents = 1500,
-}) {
-  if (!blueprintId) blueprintId = await findBlueprintId(blueprintKeyword);
-
-  if (!printProviderId) {
-    const providers = await listPrintProviders(blueprintId);
-    if (!providers?.length) throw new Error(`No providers for blueprint ${blueprintId}`);
-    printProviderId = providers[0].id;
-  }
-
-  if (!variantId) {
-    const variantsArr = await listVariants(blueprintId, printProviderId);
-    if (!variantsArr.length) throw new Error(`No variants returned (provider ${printProviderId})`);
-    const enabled = variantsArr.find(v => v.is_enabled !== false) || variantsArr[0];
-    variantId = enabled.id;
-  }
-
-  // Use URL upload if available, fallback to base64
-  let uploaded;
-  if (imageUrl) {
-    uploaded = await uploadImageFromUrl(imageUrl);
-  } else if (base64Image) {
-    uploaded = await uploadImageFromBase64(base64Image);
-  } else {
-    throw new Error('Either imageUrl or base64Image must be provided');
-  }
-
-  const payload = {
-    title,
-    description,
-    blueprint_id: blueprintId,
-    print_provider_id: printProviderId,
-    tags,
-    variants: [
-      { id: variantId, price: priceCents, is_enabled: true },
-    ],
-    print_areas: [
-      {
-        variant_ids: [variantId],
-        placeholders: [
-          {
-            position: 'front',
-            images: [
-              { id: uploaded.id, x, y, scale, angle: 0 },
-            ],
-          },
-        ],
-        background,
-      },
-    ],
-    is_visible: true,
-  };
-
-  const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
-  return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
-}
-
-export async function createTestProduct() {
-  // Use a public test image URL
-  const testImageUrl = 'https://via.placeholder.com/300x300/ff0000/ffffff?text=TEST';
-  
-  return createProduct({
-    imageUrl: testImageUrl,
-  });
-}
-
 export async function createOrder({
-  imageUrl, // NEW: Use imageUrl instead of base64Image
-  base64Image, // LEGACY: Keep for backward compatibility
+  imageUrl,
+  base64Image,
   variantId,
   position = { x: 0.5, y: 0.5, scale: 1.0, angle: 0 },
   recipient,
@@ -249,15 +166,30 @@ export async function createOrder({
     recipient: recipient.name
   });
 
-  // Use URL upload if available, fallback to base64
   let uploaded;
   if (imageUrl) {
     uploaded = await uploadImageFromUrl(imageUrl);
   } else if (base64Image) {
     uploaded = await uploadImageFromBase64(base64Image);
   }
-  
+
   console.log('Image uploaded successfully:', uploaded.id);
+
+  const shopProductsUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
+  const products = await safeFetch(shopProductsUrl, { headers: authHeaders() });
+
+  let printProviderId = null;
+  for (const product of products) {
+    const variant = product.variants.find(v => v.id === parseInt(variantId));
+    if (variant) {
+      printProviderId = product.print_provider_id;
+      break;
+    }
+  }
+
+  if (!printProviderId) {
+    throw new Error(`Unable to resolve print_provider_id for variant ${variantId}`);
+  }
 
   const payload = {
     external_id: `order-${Date.now()}`,
@@ -266,6 +198,7 @@ export async function createOrder({
       {
         variant_id: parseInt(variantId),
         quantity: 1,
+        print_provider_id: printProviderId,
         print_areas: {
           front: [
             {
@@ -295,5 +228,9 @@ export async function createOrder({
   console.log('Creating order with payload:', JSON.stringify(payload, null, 2));
 
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
-  return safeFetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify(payload) });
+  return safeFetch(url, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
 }
