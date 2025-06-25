@@ -1,12 +1,13 @@
-require('dotenv').config();
-const express = require('express');
-const crypto = require('crypto');
-const bodyParser = require('body-parser');
-const cors = require('cors');
-const fetch = require('node-fetch');
-const { v2: cloudinary } = require('cloudinary');
-const printifyService = require('./services/printifyService.js');
-const { safeFetch } = require('./services/printifyService.js');
+import express from 'express';
+import crypto from 'crypto';
+import bodyParser from 'body-parser';
+import cors from 'cors';
+import fetch from 'node-fetch';
+import { v2 as cloudinary } from 'cloudinary';
+import * as printifyService from './services/printifyService.js';
+import { safeFetch } from './services/printifyService.js';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const { createOrder } = printifyService;
 const app = express();
@@ -43,6 +44,7 @@ app.post('/webhooks/orders/create', (req, res) => {
 
   res.status(200).send('Webhook received');
 });
+
 
 const corsOptions = {
   origin: true,
