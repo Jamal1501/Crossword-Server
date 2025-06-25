@@ -253,4 +253,4 @@ process.on('SIGTERM', () => {
   server.close(() => console.log('HTTP server closed'));
 });
 
-module.exports = app;
+export default app;
