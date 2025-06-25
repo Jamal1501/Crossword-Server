@@ -18,7 +18,61 @@ app.use(bodyParser.json());
 
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
-app.post('/webhooks/orders/create', (req, res) => {
+async function handlePrintifyOrder(order) {
+  const items = order.line_items.map((item) => {
+    const custom_image = item.properties?.find(p => p.name === '_custom_image')?.value;
+    const design_specs_raw = item.properties?.find(p => p.name === '_design_specs')?.value;
+    const design_specs = design_specs_raw ? JSON.parse(design_specs_raw) : null;
+
+    return {
+      title: item.title,
+      variant_id: item.variant_id, // Shopify variant ID, to be mapped
+      custom_image,
+      design_specs
+    };
+  });
+
+  for (const item of items) {
+    if (!item.custom_image || !item.design_specs || !item.variant_id) {
+      console.warn('⚠️ Skipping item due to missing data:', item);
+      continue;
+    }
+
+    // Placeholder mapping logic – replace with actual Printify variant lookup
+    const printifyVariantId = 123456; // TODO: resolve based on Shopify variant
+
+    const position = {
+      x: 0.5, // TODO: calculate from design_specs
+      y: 0.5,
+      scale: 1.0,
+      angle: 0
+    };
+
+    const recipient = {
+      name: `${order.shipping_address.first_name} ${order.shipping_address.last_name}`,
+      email: order.email,
+      phone: order.phone || '',
+      address1: order.shipping_address.address1,
+      city: order.shipping_address.city,
+      zip: order.shipping_address.zip,
+      country: order.shipping_address.country_code,
+    };
+
+    try {
+      const response = await createOrder({
+        imageUrl: item.custom_image,
+        variantId: printifyVariantId,
+        position,
+        recipient
+      });
+      console.log('✅ Printify order created:', response?.id || '[no id]');
+    } catch (err) {
+      console.error('❌ Failed to create Printify order:', err);
+    }
+  }
+}
+
+app.post('/webhooks/orders/create', async (req, res) => {
   const hmac = req.headers['x-shopify-hmac-sha256'];
   const rawBody = req.body;
 
@@ -33,17 +87,11 @@ app.post('/webhooks/orders/create', (req, res) => {
   }
 
   const order = JSON.parse(rawBody.toString());
-  const items = order.line_items.map((item) => ({
-    title: item.title,
-    custom_image: item.properties?.find(p => p.name === '_custom_image')?.value,
-    design_specs: item.properties?.find(p => p.name === '_design_specs')?.value,
-  }));
-
   console.log('✅ Verified webhook for order:', order.id);
-  console.log(JSON.stringify(items, null, 2));
-
+  await handlePrintifyOrder(order);
   res.status(200).send('Webhook received');
 });
+
 
 
 const corsOptions = {
