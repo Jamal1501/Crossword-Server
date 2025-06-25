@@ -185,16 +185,19 @@ export async function createOrder({
   }
 
   let printProviderId = null;
-  for (const product of products) {
-    const variant = product.variants?.find(v => v.id === parseInt(variantId));
+  let blueprintId = null;
+
+  for (const p of products) {
+    const variant = p.variants?.find(v => v.id === parseInt(variantId));
     if (variant) {
-      printProviderId = product.print_provider_id;
+      printProviderId = p.print_provider_id;
+      blueprintId = p.blueprint_id;
       break;
     }
   }
 
-  if (!printProviderId) {
-    throw new Error(`Unable to resolve print_provider_id for variant ${variantId}`);
+  if (!printProviderId || !blueprintId) {
+    throw new Error(`Unable to resolve print_provider_id or blueprint_id for variant ${variantId}`);
   }
 
   const payload = {
@@ -205,7 +208,7 @@ export async function createOrder({
         variant_id: parseInt(variantId),
         quantity: 1,
         print_provider_id: printProviderId,
-        blueprint_id: product.blueprint_id,
+        blueprint_id: blueprintId,
         print_areas: {
           front: [
             {
@@ -241,4 +244,5 @@ export async function createOrder({
     body: JSON.stringify(payload)
   });
 }
+
 export { safeFetch };
