@@ -139,7 +139,7 @@ export async function createOrder({
                 position: 'front',
                 images: [
                   {
-                    id: uploaded.id,
+                    src: uploaded.src,
                     x: position.x,
                     y: position.y,
                     scale: position.scale,
