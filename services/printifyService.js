@@ -205,6 +205,7 @@ export async function createOrder({
         variant_id: parseInt(variantId),
         quantity: 1,
         print_provider_id: printProviderId,
+        blueprint_id: product.blueprint_id,
         print_areas: {
           front: [
             {
