@@ -1,3 +1,12 @@
+import express from 'express';
+import crypto from 'crypto';
+import bodyParser from 'body-parser';
+
+// Shopify requires raw body for HMAC
+const app = express();
+app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json' }));
+app.use(bodyParser.json()); // for all other routes
+
 import 'dotenv/config';
 import express from 'express';
 import { v2 as cloudinary } from 'cloudinary';
@@ -10,6 +19,38 @@ import { safeFetch } from './services/printifyService.js';
 const { createOrder } = printifyService;
 
 const app = express();
+
+const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
+
+app.post('/webhooks/orders/create', (req, res) => {
+  const hmac = req.headers['x-shopify-hmac-sha256'];
+  const rawBody = req.body; // Buffer
+
+  const digest = crypto
+    .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
+    .update(rawBody, 'utf8')
+    .digest('base64');
+
+  if (digest !== hmac) {
+    console.warn('⚠️ Webhook HMAC verification failed.');
+    return res.status(401).send('HMAC validation failed');
+  }
+
+  const order = JSON.parse(rawBody.toString());
+
+  // Extract relevant data
+  const items = order.line_items.map((item) => ({
+    title: item.title,
+    custom_image: item.properties?.find(p => p.name === '_custom_image')?.value,
+    design_specs: item.properties?.find(p => p.name === '_design_specs')?.value,
+  }));
+
+  console.log('✅ Verified webhook for order:', order.id);
+  console.log(JSON.stringify(items, null, 2));
+
+  res.status(200).send('Webhook received');
+});
+
 
 /* ────────────────────────────────────────────────────────── CORS */
 const corsOptions = {
