@@ -80,6 +80,7 @@ async function handlePrintifyOrder(order) {
 }
 
 app.post('/webhooks/orders/create', async (req, res) => {
+  console.log('📦 IS BUFFER:', Buffer.isBuffer(req.body)); // <- this is key
   const hmac = req.headers['x-shopify-hmac-sha256'];
   const rawBody = req.body;
 
