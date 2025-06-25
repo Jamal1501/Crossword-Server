@@ -1,30 +1,25 @@
-import express from 'express';
-import crypto from 'crypto';
-import bodyParser from 'body-parser';
-
-// Shopify requires raw body for HMAC
-const app = express();
-app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json' }));
-app.use(bodyParser.json()); // for all other routes
-
-import 'dotenv/config';
-import express from 'express';
-import { v2 as cloudinary } from 'cloudinary';
-import cors from 'cors';
-import fetch from 'node-fetch';
-import * as printifyService from './services/printifyService.js';
-import { safeFetch } from './services/printifyService.js';
-
+require('dotenv').config();
+const express = require('express');
+const crypto = require('crypto');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const fetch = require('node-fetch');
+const { v2: cloudinary } = require('cloudinary');
+const printifyService = require('./services/printifyService.js');
+const { safeFetch } = require('./services/printifyService.js');
 
 const { createOrder } = printifyService;
-
 const app = express();
+
+// Shopify raw body middleware for HMAC verification
+app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json' }));
+app.use(bodyParser.json());
 
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
 app.post('/webhooks/orders/create', (req, res) => {
   const hmac = req.headers['x-shopify-hmac-sha256'];
-  const rawBody = req.body; // Buffer
+  const rawBody = req.body;
 
   const digest = crypto
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
@@ -37,8 +32,6 @@ app.post('/webhooks/orders/create', (req, res) => {
   }
 
   const order = JSON.parse(rawBody.toString());
-
-  // Extract relevant data
   const items = order.line_items.map((item) => ({
     title: item.title,
     custom_image: item.properties?.find(p => p.name === '_custom_image')?.value,
@@ -51,28 +44,22 @@ app.post('/webhooks/orders/create', (req, res) => {
   res.status(200).send('Webhook received');
 });
 
-
-/* ────────────────────────────────────────────────────────── CORS */
 const corsOptions = {
-  origin: true, // TODO: lock this down in prod
+  origin: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 };
 app.use(cors(corsOptions));
-
-/* ─────────────────────────────────────────────── Body parsing */
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-/* ─────────────────────────────────────────── Cloudinary setup */
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-/* ───────────────────────────────────────────── Error handler */
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({
@@ -81,12 +68,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-/* ───────────────────────────────────────────── Health check */
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-/* ─────────────────────────────────────── Printify — shop test */
 app.get('/api/printify/test', async (req, res) => {
   try {
     const shopId = await printifyService.getShopId();
@@ -97,7 +82,6 @@ app.get('/api/printify/test', async (req, res) => {
   }
 });
 
-/* ─────────────────────────── Get test variantId */
 app.get('/api/printify/test-variant', async (req, res) => {
   try {
     const blueprintId = await printifyService.findBlueprintId('mug');
@@ -112,7 +96,6 @@ app.get('/api/printify/test-variant', async (req, res) => {
   }
 });
 
-/* ───────────────────────────────────── Printify — test product */
 app.post('/api/printify/create-test-product', async (req, res) => {
   try {
     const product = await printifyService.createTestProduct();
@@ -123,24 +106,15 @@ app.post('/api/printify/create-test-product', async (req, res) => {
   }
 });
 
-/* ───────────────────────────────────── NEW: Printify — create order with URL */
 app.post('/api/printify/order', async (req, res) => {
   try {
     const { imageUrl, base64Image, variantId, position, recipient } = req.body;
 
-    // Prioritize imageUrl over base64Image
     if (!imageUrl && !base64Image) {
-      return res.status(400).json({ 
-        error: 'Either imageUrl or base64Image is required', 
-        success: false 
-      });
+      return res.status(400).json({ error: 'Either imageUrl or base64Image is required', success: false });
     }
-
     if (!variantId || !recipient) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: variantId, recipient', 
-        success: false 
-      });
+      return res.status(400).json({ error: 'Missing required fields: variantId, recipient', success: false });
     }
 
     console.log('Creating order with:', {
@@ -150,14 +124,7 @@ app.post('/api/printify/order', async (req, res) => {
       recipient: recipient.name
     });
 
-    const order = await createOrder({ 
-      imageUrl, // Use imageUrl if provided
-      base64Image, // Fallback to base64Image
-      variantId, 
-      position, 
-      recipient 
-    });
-    
+    const order = await createOrder({ imageUrl, base64Image, variantId, position, recipient });
     res.json({ success: true, order });
   } catch (err) {
     console.error('Order creation failed:', err);
@@ -165,16 +132,12 @@ app.post('/api/printify/order', async (req, res) => {
   }
 });
 
-/* ─────────────────────────────────────────── Save crossword */
 app.post('/save-crossword', async (req, res) => {
   try {
     const { image } = req.body;
 
-    if (!image) {
-      return res.status(400).json({ error: 'No image data provided', success: false });
-    }
-    if (!image.startsWith('data:image/')) {
-      return res.status(400).json({ error: 'Invalid image format', success: false });
+    if (!image || !image.startsWith('data:image/')) {
+      return res.status(400).json({ error: 'Invalid or missing image', success: false });
     }
 
     const result = await cloudinary.uploader.upload(image, {
@@ -182,39 +145,24 @@ app.post('/save-crossword', async (req, res) => {
       timeout: 60000,
     });
 
-    // Return both the URL and success flag
-    res.json({ 
-      url: result.secure_url, 
-      success: true,
-      public_id: result.public_id // Useful for future reference
-    });
+    res.json({ url: result.secure_url, success: true, public_id: result.public_id });
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ error: 'Failed to save image', details: error.message, success: false });
   }
 });
 
-/* ─────────────────────────────────── NEW: Direct order from Cloudinary URL */
 app.post('/api/printify/order-from-url', async (req, res) => {
   try {
     const { cloudinaryUrl, variantId, position, recipient } = req.body;
 
     if (!cloudinaryUrl || !variantId || !recipient) {
-      return res.status(400).json({ 
-        error: 'Missing required fields: cloudinaryUrl, variantId, recipient', 
-        success: false 
-      });
+      return res.status(400).json({ error: 'Missing required fields: cloudinaryUrl, variantId, recipient', success: false });
     }
 
     console.log('Creating order directly from Cloudinary URL:', cloudinaryUrl);
 
-    const order = await createOrder({ 
-      imageUrl: cloudinaryUrl, 
-      variantId, 
-      position, 
-      recipient 
-    });
-    
+    const order = await createOrder({ imageUrl: cloudinaryUrl, variantId, position, recipient });
     res.json({ success: true, order });
   } catch (err) {
     console.error('Order creation failed:', err);
@@ -222,7 +170,6 @@ app.post('/api/printify/order-from-url', async (req, res) => {
   }
 });
 
-/* ─────────────────────────────────────────── Products list */
 app.get('/products', async (req, res) => {
   try {
     const [printifyProducts, shopifyProducts] = await Promise.all([
@@ -237,8 +184,6 @@ app.get('/products', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch products', details: error.message });
   }
 });
-
-/* ─────────────────────────────────────── Helper functions */
 
 app.get('/api/printify/products', async (req, res) => {
   try {
@@ -256,8 +201,6 @@ app.get('/api/printify/products', async (req, res) => {
   }
 });
 
-
-/* ─────────────────────────────────────── Helper functions */
 async function fetchPrintifyProducts() {
   const response = await fetch(
     `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`,
@@ -297,17 +240,15 @@ function transformProducts(printifyData, shopifyData) {
   };
 }
 
-/* ────────────────────────────────────────────── Boot server */
 const port = process.env.PORT || 8888;
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${port}`);
   console.log(`Health check → http://localhost:${port}/health`);
 });
 
-/* ────────────────────────────────────────── Graceful shutdown */
 process.on('SIGTERM', () => {
   console.log('SIGTERM received: closing HTTP server');
   server.close(() => console.log('HTTP server closed'));
 });
 
-export default app;
+module.exports = app;
