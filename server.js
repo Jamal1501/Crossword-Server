@@ -330,14 +330,17 @@ app.get('/debug/printify-variants', async (req, res) => {
       }
     });
 
-    if (!response.ok) {
-      const error = await response.text();
-      console.error('❌ Failed to fetch products:', error);
-      return res.status(500).send('Failed to fetch products');
+    const text = await response.text();
+    console.log('🪵 Raw response from Printify:', text);
+
+    const data = JSON.parse(text);
+
+    if (!Array.isArray(data)) {
+      console.error('❌ Unexpected response format:', data);
+      return res.status(500).send('Printify did not return a product list');
     }
 
-    const products = await response.json();
-    const result = products.map(p => ({
+    const result = data.map(p => ({
       productTitle: p.title,
       productId: p.id,
       variants: p.variants.map(v => ({
@@ -354,5 +357,6 @@ app.get('/debug/printify-variants', async (req, res) => {
     res.status(500).send('Internal error');
   }
 });
+
 
 export default app;
