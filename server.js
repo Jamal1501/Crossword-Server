@@ -176,9 +176,24 @@ app.post('/api/printify/create-test-product', async (req, res) => {
   }
 });
 
+const submittedOrders = new Set();  // memory-only cache
+
 app.post('/api/printify/order', async (req, res) => {
   try {
     const { imageUrl, base64Image, variantId, position, recipient } = req.body;
+    const { orderId } = req.body;
+
+if (!orderId) {
+  return res.status(400).json({ error: 'Missing orderId', success: false });
+}
+
+if (submittedOrders.has(orderId)) {
+  console.log('Duplicate order blocked:', orderId);
+  return res.status(200).json({ success: true, duplicate: true });
+}
+
+submittedOrders.add(orderId);
+
 
     if (!imageUrl && !base64Image) {
       return res.status(400).json({ error: 'Either imageUrl or base64Image is required', success: false });
