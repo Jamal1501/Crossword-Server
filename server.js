@@ -182,6 +182,8 @@ app.post('/api/printify/order', async (req, res) => {
   try {
     const { imageUrl, base64Image, variantId, position, recipient } = req.body;
     const { orderId } = req.body;
+    console.log('Received orderId:', orderId);
+
 
 if (!orderId) {
   return res.status(400).json({ error: 'Missing orderId', success: false });
