@@ -319,4 +319,40 @@ process.on('SIGTERM', () => {
   server.close(() => console.log('HTTP server closed'));
 });
 
+app.get('/debug/printify-variants', async (req, res) => {
+  try {
+    const shopId = process.env.PRINTIFY_SHOP_ID;
+    const apiKey = process.env.PRINTIFY_API_KEY;
+
+    const response = await fetch(`https://api.printify.com/v1/shops/${shopId}/products.json`, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
+      }
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('❌ Failed to fetch products:', error);
+      return res.status(500).send('Failed to fetch products');
+    }
+
+    const products = await response.json();
+    const result = products.map(p => ({
+      productTitle: p.title,
+      productId: p.id,
+      variants: p.variants.map(v => ({
+        title: v.title,
+        variantId: v.id,
+        sku: v.sku
+      }))
+    }));
+
+    console.log('✅ Variant Dump:', JSON.stringify(result, null, 2));
+    res.status(200).json(result);
+  } catch (err) {
+    console.error('❌ Error during variant fetch:', err);
+    res.status(500).send('Internal error');
+  }
+});
+
 export default app;
