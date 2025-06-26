@@ -333,14 +333,14 @@ app.get('/debug/printify-variants', async (req, res) => {
     const text = await response.text();
     console.log('🪵 Raw response from Printify:', text);
 
-    const data = JSON.parse(text);
+    const parsed = JSON.parse(text);
 
-    if (!Array.isArray(data)) {
-      console.error('❌ Unexpected response format:', data);
+    if (!parsed || !Array.isArray(parsed.data)) {
+      console.error('❌ Unexpected response format:', parsed);
       return res.status(500).send('Printify did not return a product list');
     }
 
-    const result = data.map(p => ({
+    const result = parsed.data.map(p => ({
       productTitle: p.title,
       productId: p.id,
       variants: p.variants.map(v => ({
