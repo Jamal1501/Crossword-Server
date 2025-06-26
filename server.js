@@ -25,22 +25,24 @@ async function handlePrintifyOrder(order) {
 
     return {
       title: item.title,
-      variant_id: item.variant_id,
+      variant_id: item.variant_id, // Shopify variant ID
       custom_image,
       design_specs
     };
   });
+
+  const VARIANT_MAP = {
+    '51220006142281': 79551, // Greeting Cards
+    '51300750754121': 79551, // Holiday Cards
+    'YOUR_SHOPIFY_VARIANT_ID_FOR_11OZ': 62327, // Replace with real ID
+    'YOUR_SHOPIFY_VARIANT_ID_FOR_15OZ': 62328  // Replace with real ID
+  };
 
   for (const item of items) {
     if (!item.custom_image || !item.design_specs || !item.variant_id) {
       console.warn('⚠️ Skipping item due to missing data:', item);
       continue;
     }
-
-    const VARIANT_MAP = {
-      '51220006142281': '674069a6ac141e32aa0ff778',
-      '51300750754121': '6740694e665f07692704a7eb',
-    };
 
     const printifyVariantId = VARIANT_MAP[item.variant_id];
     if (!printifyVariantId) {
@@ -80,7 +82,6 @@ async function handlePrintifyOrder(order) {
 }
 
 app.post('/webhooks/orders/create', async (req, res) => {
-  console.log('📦 IS BUFFER:', Buffer.isBuffer(req.body)); // <- this is key
   const hmac = req.headers['x-shopify-hmac-sha256'];
   const rawBody = req.body;
 
@@ -90,7 +91,7 @@ app.post('/webhooks/orders/create', async (req, res) => {
 
   const digest = crypto
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(rawBody)
+    .update(rawBody, 'utf8')
     .digest('base64');
 
   console.log('CALCULATED DIGEST:', digest);
@@ -109,6 +110,7 @@ app.post('/webhooks/orders/create', async (req, res) => {
 
 // All other middleware comes after webhook
 app.use(bodyParser.json());
+
 
 
 
