@@ -323,7 +323,7 @@ async function transformProducts(printifyData, shopifyData) {
         }
       });
 
-      const variant = variantRes?.find(v => v.id === p.variants[0]?.id);
+      const variant = variantRes?.variants?.find(v => v.id === p.variants[0]?.id);  
       const area = variant?.print_areas?.front?.[0];
       console.log('Fetched print area for:', p.title, area);
 
