@@ -45,7 +45,7 @@ class CrosswordEditor {
         };
     }
 
-async openEditor(variantId, productImage, productTitle, crosswordImage, price, printArea) {
+async openEditor(productTitle, productImage, variantId, crosswordImage, price, printArea) {
     console.log('Opening editor with:', { variantId, productImage, productTitle, crosswordImage, price });
     
     const existingModal = document.querySelector('.editor-modal');
@@ -292,13 +292,14 @@ getProductCardsHTML(pageNumber) {
     const pageProducts = this.products.slice(startIndex, endIndex);
 
     return pageProducts.map(product => `
-        <div class="product-card" onclick="crosswordEditor.openEditor(
-            '${product.variantId}', 
-            '${product.image}', 
-            '${product.title}', 
-            '${this.currentProduct?.crosswordImage}', 
-            ${product.price}
-        )">
+        <div class="product-card" onclick='crosswordEditor.openEditor(
+    "${product.title}", 
+    "${product.image}", 
+    "${product.variantId}", 
+    "${this.currentProduct?.crosswordImage}", 
+    ${product.price}, 
+    ${JSON.stringify(product.printArea)}
+)'>
             <img src="${product.image}" alt="${product.title}" class="product-image">
             <h3>${product.title}</h3>
             <p>$${product.price}</p>
