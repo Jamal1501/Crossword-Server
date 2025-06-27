@@ -63,7 +63,7 @@ async openEditor(productTitle, productImage, variantId, crosswordImage, price, p
         }
 
         // Default print area specifications
-        const defaultPrintArea = {
+        const defaultPrintArea = printArea || {
             width: 300,
             height: 300,
             top: 100,
