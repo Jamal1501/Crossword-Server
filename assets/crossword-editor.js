@@ -238,9 +238,12 @@ async showProductSelection() {
         };
 
         // Use Shopify's products.json endpoint
-        const response = await fetch('/products');
-        const productsData = await response.json();
-        
+        const response = await fetch('/apps/crossword/products');
+        const text = await response.text();
+
+        console.log('Raw response from /apps/crossword/products:', text);
+        const productsData = JSON.parse(text);
+
         // Map the products data to our required format
        this.products = productsData.products;
 
@@ -373,4 +376,3 @@ changePage(newPage) {
 // Initialize the editor and make it globally available
 const crosswordEditor = new CrosswordEditor();
 window.crosswordEditor = crosswordEditor;
-
