@@ -238,7 +238,7 @@ async showProductSelection() {
         };
 
         // Use Shopify's products.json endpoint
-        const response = await fetch('/products.json');
+        const response = await fetch('/products');
         const productsData = await response.json();
         
         // Map the products data to our required format
