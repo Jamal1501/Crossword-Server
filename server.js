@@ -273,21 +273,19 @@ app.get('/products', async (req, res) => {
 });
 
 app.get('/apps/crossword/products', async (req, res) => {
-  try {
-    const [printifyProducts, shopifyProducts] = await Promise.all([
-      fetchPrintifyProducts(),
-      fetchShopifyProducts(),
-    ]);
-
-    const transformed = await transformProducts(printifyProducts, shopifyProducts);
-    console.log('[SERVER] Transformed products:', JSON.stringify(transformed, null, 2));
-    res.json(transformed);
-
-  } catch (error) {
-    console.error('Crossword products error:', error);
-    res.status(500).json({ error: 'Failed to fetch crossword products', details: error.message });
-  }
+  res.json({
+    products: [
+      {
+        title: 'Test Mug',
+        image: 'https://via.placeholder.com/150',
+        variantId: '123456789',
+        price: 12.5,
+        printArea: { width: 300, height: 300, top: 50, left: 50 }
+      }
+    ]
+  });
 });
+
 
 
 app.get('/api/printify/products', async (req, res) => {
