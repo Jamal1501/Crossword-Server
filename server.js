@@ -272,6 +272,22 @@ app.get('/products', async (req, res) => {
   }
 });
 
+app.get('/apps/crossword/products', async (req, res) => {
+  try {
+    const [printifyProducts, shopifyProducts] = await Promise.all([
+      fetchPrintifyProducts(),
+      fetchShopifyProducts(),
+    ]);
+
+    const transformed = await transformProducts(printifyProducts, shopifyProducts);
+    res.json(transformed);
+  } catch (error) {
+    console.error('Crossword products error:', error);
+    res.status(500).json({ error: 'Failed to fetch crossword products', details: error.message });
+  }
+});
+
+
 app.get('/api/printify/products', async (req, res) => {
   try {
     const url = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`;
