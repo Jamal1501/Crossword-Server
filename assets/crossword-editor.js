@@ -242,12 +242,8 @@ async showProductSelection() {
         const productsData = await response.json();
         
         // Map the products data to our required format
-        this.products = productsData.products.map(product => ({
-            variantId: product.variants[0].id,
-            image: product.images[0]?.src || '',
-            title: product.title,
-            price: product.variants[0].price
-        }));
+       this.products = productsData.products;
+
         
         if (this.products.length === 0) {
             this.showFeedback("No products available", true);
