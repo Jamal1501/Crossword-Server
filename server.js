@@ -115,7 +115,7 @@ app.use(bodyParser.json());
 
 
 const corsOptions = {
-  origin: true,
+  origin: 'https://loveframes.shop',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
