@@ -280,7 +280,9 @@ app.get('/apps/crossword/products', async (req, res) => {
     ]);
 
     const transformed = await transformProducts(printifyProducts, shopifyProducts);
+    console.log('[SERVER] Transformed products:', JSON.stringify(transformed, null, 2));
     res.json(transformed);
+
   } catch (error) {
     console.error('Crossword products error:', error);
     res.status(500).json({ error: 'Failed to fetch crossword products', details: error.message });
