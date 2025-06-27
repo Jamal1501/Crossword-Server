@@ -45,7 +45,7 @@ class CrosswordEditor {
         };
     }
 
-async openEditor(variantId, productImage, productTitle, crosswordImage, price) {
+async openEditor(variantId, productImage, productTitle, crosswordImage, price, printArea) {
     console.log('Opening editor with:', { variantId, productImage, productTitle, crosswordImage, price });
     
     const existingModal = document.querySelector('.editor-modal');
