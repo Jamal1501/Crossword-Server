@@ -306,26 +306,56 @@ async function fetchShopifyProducts() {
   return response.json();
 }
 
-function transformProducts(printifyData, shopifyData) {
-  return {
-    products: printifyData.data
-      .map(p => {
-        const match = shopifyData.products.find(s =>
-          s.title.toLowerCase().includes(p.title.toLowerCase()) ||
-          p.title.toLowerCase().includes(s.title.toLowerCase()),
-        );
-        return {
-          id: p.id,
-          title: p.title,
-          image: p.images[0]?.src || 'https://via.placeholder.com/150',
-          price: (p.variants[0]?.price || 0) / 100,
-          variantId: match?.variants[0]?.id?.toString() || '',
-          shopifyProductId: match?.id || '',
+async function transformProducts(printifyData, shopifyData) {
+  const products = await Promise.all(printifyData.data.map(async p => {
+    const match = shopifyData.products.find(s =>
+      s.title.toLowerCase().includes(p.title.toLowerCase()) ||
+      p.title.toLowerCase().includes(s.title.toLowerCase())
+    );
+
+    let printArea = null;
+
+    try {
+      const variantRes = await safeFetch(`https://api.printify.com/v1/catalog/blueprints/${p.blueprint_id}/print_providers/${p.print_provider_id}/variants.json`, {
+        headers: {
+          Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const variant = variantRes?.find(v => v.id === p.variants[0]?.id);
+      const area = variant?.print_areas?.front?.[0];
+      console.log('Fetched print area for:', p.title, area);
+
+
+      if (area) {
+        printArea = {
+          width: area.width,
+          height: area.height,
+          top: area.top || 0,
+          left: area.left || 0
         };
-      })
-      .filter(prod => prod.variantId),
+      }
+    } catch (err) {
+      console.error(`Failed to fetch print area for ${p.title}:`, err.message);
+    }
+
+    return {
+      id: p.id,
+      title: p.title,
+      image: p.images[0]?.src || 'https://via.placeholder.com/150',
+      price: (p.variants[0]?.price || 0) / 100,
+      variantId: match?.variants[0]?.id?.toString() || '',
+      shopifyProductId: match?.id || '',
+      printArea
+    };
+  }));
+
+  return {
+    products: products.filter(prod => prod.variantId)
   };
 }
+
 
 const port = process.env.PORT || 8888;
 const server = app.listen(port, '0.0.0.0', () => {
