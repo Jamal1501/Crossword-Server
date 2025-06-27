@@ -325,7 +325,7 @@ async function transformProducts(printifyData, shopifyData) {
 
       const variant = variantRes?.variants?.find(v => v.id === p.variants[0]?.id);  
       console.log('Variant object for', p.title, JSON.stringify(variant, null, 2));
-      const area = variant?.print_areas?.front?.[0];
+      const area = variant?.placeholders?.find(p => p.position === 'front');
       console.log('Fetched print area for:', p.title, area);
 
 
