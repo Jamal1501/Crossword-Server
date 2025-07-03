@@ -361,7 +361,7 @@ async function transformProducts(printifyData, shopifyData) {
     return {
       id: p.id,
       title: p.title,
-      image: p.images[0]?.src || 'https://via.placeholder.com/150',
+      image: p.images[0]?.src || 'https://res.cloudinary.com/demo/image/upload/sample.jpg',
       price: (p.variants[0]?.price || 0) / 100,
       variantId: match?.variants[0]?.id?.toString() || '',
       shopifyProductId: match?.id || '',
