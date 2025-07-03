@@ -273,11 +273,12 @@ app.get('/products', async (req, res) => {
 });
 
 app.get('/apps/crossword/products', async (req, res) => {
+    const latestImage = req.query.image || 'https://res.cloudinary.com/demo/image/upload/sample.jpg';
   res.json({
     products: [
       {
         title: 'Test Mug',
-        image: 'https://via.placeholder.com/150',
+        image: latestImage,
         variantId: '123456789',
         price: 12.5,
         printArea: { width: 300, height: 300, top: 50, left: 50 }
