@@ -279,7 +279,7 @@ app.get('/apps/crossword/products', async (req, res) => {
       {
         title: 'Test Mug',
         image: latestImage,
-        variantId: '123456789',
+        variantId: '44839750344724',
         price: 12.5,
         printArea: { width: 300, height: 300, top: 50, left: 50 }
       }
