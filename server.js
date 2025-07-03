@@ -265,7 +265,7 @@ app.get('/products', async (req, res) => {
     ]);
 
     const transformed = transformProducts(printifyProducts, shopifyProducts);
-    res.json(transformed);
+    res.json({ products: transformed });
   } catch (error) {
     console.error('Products error:', error);
     res.status(500).json({ error: 'Failed to fetch products', details: error.message });
