@@ -430,20 +430,23 @@ process.on('SIGTERM', () => {
 
 app.get('/admin/shopify-products', async (req, res) => {
   try {
-    // Secret protection
+    // Protect route with secret token
     const auth = req.headers.authorization;
     if (auth !== `Bearer ${process.env.ADMIN_SECRET}`) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`;
-    const response = await fetch(url, {
+    const store = process.env.SHOPIFY_STORE;
+    const apiKey = process.env.SHOPIFY_API_KEY;
+    const password = process.env.SHOPIFY_PASSWORD;
+
+    const authString = Buffer.from(`${apiKey}:${password}`).toString('base64');
+    const response = await fetch(`https://${store}.myshopify.com/admin/api/2024-01/products.json`, {
       headers: {
-        'X-Shopify-Access-Token': process.env.SHOPIFY_ADMIN_TOKEN,
+        'Authorization': `Basic ${authString}`,
         'Content-Type': 'application/json',
       }
     });
-    if (req.ip !== 'your.home.ip.address') return res.status(403).send('Access denied');
 
     if (!response.ok) {
       throw new Error(`Shopify API error: ${response.status}`);
@@ -451,7 +454,6 @@ app.get('/admin/shopify-products', async (req, res) => {
 
     const data = await response.json();
 
-    // Extract useful mapping info
     const clean = data.products.flatMap(product => 
       product.variants.map(variant => ({
         productTitle: product.title,
@@ -463,10 +465,11 @@ app.get('/admin/shopify-products', async (req, res) => {
 
     res.json({ success: true, variants: clean });
   } catch (err) {
-    console.error('❌ Shopify admin fetch failed:', err);
+    console.error('❌ Shopify Admin API error:', err);
     res.status(500).json({ error: 'Shopify API error', details: err.message });
   }
 });
+
 
 
 app.get('/debug/printify-variants', async (req, res) => {
