@@ -7,6 +7,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import * as printifyService from './services/printifyService.js';
 import { safeFetch } from './services/printifyService.js';
 import dotenv from 'dotenv';
+import { generateMap } from './scripts/generateVariantMap.js';
 dotenv.config();
 
 const { createOrder } = printifyService;
@@ -128,6 +129,21 @@ cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+app.post('/admin/generate-variant-map', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${process.env.ADMIN_SECRET}`) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const map = await generateMap();
+    res.json({ success: true, generated: map });
+  } catch (err) {
+    console.error('❌ Variant map generation failed:', err);
+    res.status(500).json({ error: 'Failed to generate variant map', details: err.message });
+  }
 });
 
 app.use((err, req, res, next) => {
