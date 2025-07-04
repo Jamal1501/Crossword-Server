@@ -8,6 +8,7 @@ import * as printifyService from './services/printifyService.js';
 import { safeFetch } from './services/printifyService.js';
 import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
+import variantMap from './variant-map.json' assert { type: 'json' };
 dotenv.config();
 
 const { createOrder } = printifyService;
@@ -32,12 +33,6 @@ async function handlePrintifyOrder(order) {
     };
   });
 
-  const VARIANT_MAP = {
-    '51220006142281': 79551,
-    '51300750754121': 79551, // Holiday Cards
-    'YOUR_SHOPIFY_VARIANT_ID_FOR_11OZ': 62327, 
-    'YOUR_SHOPIFY_VARIANT_ID_FOR_15OZ': 62328  
-  };
 
   for (const item of items) {
     if (!item.custom_image || !item.design_specs || !item.variant_id) {
@@ -45,7 +40,7 @@ async function handlePrintifyOrder(order) {
       continue;
     }
 
-    const printifyVariantId = VARIANT_MAP[item.variant_id];
+    const printifyVariantId = variantMap[String(item.variant_id)];
     if (!printifyVariantId) {
       console.warn('❌ No Printify variant ID found for Shopify variant:', item.variant_id);
       continue;
