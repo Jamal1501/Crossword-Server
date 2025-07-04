@@ -443,6 +443,7 @@ app.get('/admin/shopify-products', async (req, res) => {
         'Content-Type': 'application/json',
       }
     });
+    if (req.ip !== 'your.home.ip.address') return res.status(403).send('Access denied');
 
     if (!response.ok) {
       throw new Error(`Shopify API error: ${response.status}`);
