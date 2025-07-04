@@ -271,9 +271,11 @@ app.get('/products', async (req, res) => {
     );
 
     // This is the fix:
-    const productsArray = Array.isArray(response.data) ? response.data : response.data.data;
+    const allProducts = Array.isArray(response.data) ? response.data : response.data.data;
+    const publishedProducts = allProducts.filter(p => p.visible); // ✅ Only published
 
-    const products = productsArray.slice(0, 5).map((product) => {
+
+    const products = publishedProducts.slice(0, 10).map((product) => {
       const firstVariant = product.variants?.[0];
       const firstImage = product.images?.[0];
 
