@@ -271,27 +271,38 @@ app.get('/products', async (req, res) => {
     );
 
     // This is the fix:
-    const allProducts = Array.isArray(response.data) ? response.data : response.data.data;
-    const publishedProducts = allProducts.filter(p => p.visible); // ✅ Only published
+const allowedVariantIds = ['51220006142281', '51220006142282']; // ✅ Your real Shopify variants
 
+const allProducts = Array.isArray(response.data) ? response.data : response.data.data;
 
-    const products = publishedProducts.slice(0, 10).map((product) => {
-      const firstVariant = product.variants?.[0];
-      const firstImage = product.images?.[0];
+// ✅ Only include Printify products that contain a variant published in Shopify
+const publishedProducts = allProducts.filter(product =>
+  product.variants?.some(variant =>
+    allowedVariantIds.includes(variant.id.toString())
+  )
+);
 
-      return {
-        title: product.title,
-        image: firstImage?.src || '',
-        variantId: firstVariant?.id || '',
-        price: (firstVariant?.price || 1500) / 100,
-        printArea: {
-          width: 300,
-          height: 300,
-          top: 50,
-          left: 50,
-        },
-      };
-    });
+// ✅ Now transform them safely
+const products = publishedProducts.map((product) => {
+  const matchingVariant = product.variants.find(variant =>
+    allowedVariantIds.includes(variant.id.toString())
+  );
+  const firstImage = product.images?.[0];
+
+  return {
+    title: product.title,
+    image: firstImage?.src || '',
+    variantId: matchingVariant?.id || '',
+    price: (matchingVariant?.price || 1500) / 100,
+    printArea: {
+      width: 300,
+      height: 300,
+      top: 50,
+      left: 50,
+    },
+  };
+});
+
 
     res.json({ products });
   } catch (error) {
