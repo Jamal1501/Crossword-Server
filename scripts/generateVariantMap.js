@@ -53,12 +53,13 @@ async function fetchPrintifyVariants() {
     }
   });
 
-  const data = await response.json();
+ const json = await response.json();
+const products = Array.isArray(json.data) ? json.data : json;
 
-  return data.flatMap(p =>
-    p.variants.map(v => ({
-      printifyVariantId: v.id,
-      sku: v.sku
-    }))
-  );
+return products.flatMap(p =>
+  p.variants.map(v => ({
+    printifyVariantId: v.id,
+    sku: v.sku
+  }))
+);
 }
