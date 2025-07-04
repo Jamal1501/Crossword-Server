@@ -270,30 +270,34 @@ app.get('/products', async (req, res) => {
       }
     );
 
-    const products = response.data.slice(0, 5).map((product) => {
+    // This is the fix:
+    const productsArray = Array.isArray(response.data) ? response.data : response.data.data;
+
+    const products = productsArray.slice(0, 5).map((product) => {
       const firstVariant = product.variants?.[0];
       const firstImage = product.images?.[0];
 
       return {
         title: product.title,
-        image: firstImage?.src || '', // fallback to empty
+        image: firstImage?.src || '',
         variantId: firstVariant?.id || '',
-        price: (firstVariant?.price || 1500) / 100, // cents to euros
+        price: (firstVariant?.price || 1500) / 100,
         printArea: {
           width: 300,
           height: 300,
           top: 50,
-          left: 50
-        }
+          left: 50,
+        },
       };
     });
 
     res.json({ products });
   } catch (error) {
-    console.error("❌ Printify fetch failed:", error.response?.data || error.message);
+    console.error('❌ Printify fetch failed:', error.response?.data || error.message);
     res.status(500).json({ error: 'Failed to fetch products from Printify' });
   }
 });
+
 
 
 
