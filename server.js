@@ -32,10 +32,10 @@ async function handlePrintifyOrder(order) {
   });
 
   const VARIANT_MAP = {
-    '51220006142281': 79551, // Greeting Cards
+    '51220006142281': 79551,
     '51300750754121': 79551, // Holiday Cards
-    'YOUR_SHOPIFY_VARIANT_ID_FOR_11OZ': 62327, // Replace with real ID
-    'YOUR_SHOPIFY_VARIANT_ID_FOR_15OZ': 62328  // Replace with real ID
+    'YOUR_SHOPIFY_VARIANT_ID_FOR_11OZ': 62327, 
+    'YOUR_SHOPIFY_VARIANT_ID_FOR_15OZ': 62328  
   };
 
   for (const item of items) {
@@ -427,6 +427,46 @@ process.on('SIGTERM', () => {
   console.log('SIGTERM received: closing HTTP server');
   server.close(() => console.log('HTTP server closed'));
 });
+
+app.get('/admin/shopify-products', async (req, res) => {
+  try {
+    // Secret protection
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${process.env.ADMIN_SECRET}`) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`;
+    const response = await fetch(url, {
+      headers: {
+        'X-Shopify-Access-Token': process.env.SHOPIFY_ADMIN_TOKEN,
+        'Content-Type': 'application/json',
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`Shopify API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // Extract useful mapping info
+    const clean = data.products.flatMap(product => 
+      product.variants.map(variant => ({
+        productTitle: product.title,
+        variantTitle: variant.title,
+        shopifyVariantId: variant.id,
+        sku: variant.sku,
+      }))
+    );
+
+    res.json({ success: true, variants: clean });
+  } catch (err) {
+    console.error('❌ Shopify admin fetch failed:', err);
+    res.status(500).json({ error: 'Shopify API error', details: err.message });
+  }
+});
+
 
 app.get('/debug/printify-variants', async (req, res) => {
   try {
