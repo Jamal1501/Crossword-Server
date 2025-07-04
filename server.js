@@ -1,3 +1,4 @@
+import fs from 'fs/promises';
 import express from 'express';
 import crypto from 'crypto';
 import bodyParser from 'body-parser';
@@ -10,6 +11,16 @@ import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
 import variantMap from './variant-map.json' assert { type: 'json' };
 dotenv.config();
+
+
+let variantMap = {};
+try {
+  const json = await fs.readFile('./variant-map.json', 'utf-8');
+  variantMap = JSON.parse(json);
+  console.log('✅ Loaded variant-map.json with', Object.keys(variantMap).length, 'entries');
+} catch (err) {
+  console.error('❌ Failed to load variant-map.json:', err.message);
+}
 
 const { createOrder } = printifyService;
 const app = express();
