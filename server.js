@@ -9,7 +9,6 @@ import * as printifyService from './services/printifyService.js';
 import { safeFetch } from './services/printifyService.js';
 import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
-import variantMap from './variant-map.json' assert { type: 'json' };
 dotenv.config();
 
 
