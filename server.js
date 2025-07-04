@@ -257,7 +257,7 @@ app.post('/api/printify/order-from-url', async (req, res) => {
   }
 });
 
-const axios = require('axios');
+import axios from 'axios';
 
 app.get('/products', async (req, res) => {
   try {
