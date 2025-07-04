@@ -264,13 +264,19 @@ app.get('/products', async (req, res) => {
       fetchShopifyProducts(),
     ]);
 
+    console.log('Printify:', printifyProducts?.length);
+    console.log('Shopify:', shopifyProducts?.length);
+
     const transformed = transformProducts(printifyProducts, shopifyProducts);
+    console.log('Transformed:', transformed);
+
     res.json({ products: transformed });
   } catch (error) {
     console.error('Products error:', error);
     res.status(500).json({ error: 'Failed to fetch products', details: error.message });
   }
 });
+
 
 app.get('/apps/crossword/products', async (req, res) => {
     const latestImage = req.query.image || 'https://res.cloudinary.com/demo/image/upload/sample.jpg';
