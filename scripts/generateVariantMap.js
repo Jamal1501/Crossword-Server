@@ -4,6 +4,25 @@ import fs from 'fs/promises';
 import dotenv from 'dotenv';
 dotenv.config();
 
+export async function generateMap() {
+  const shopify = await fetchShopifyVariants();
+  const printify = await fetchPrintifyVariants();
+
+  const map = {};
+
+  for (const s of shopify) {
+    if (!s.sku) continue;
+    const match = printify.find(p => p.sku === s.sku);
+    if (match) {
+      map[s.shopifyVariantId] = match.printifyVariantId;
+    }
+  }
+
+  await fs.writeFile('variant-map.json', JSON.stringify(map, null, 2));
+  console.log('✅ Generated variant-map.json');
+  return map;
+}
+
 async function fetchShopifyVariants() {
   const { SHOPIFY_STORE, SHOPIFY_API_KEY, SHOPIFY_PASSWORD } = process.env;
   const auth = Buffer.from(`${SHOPIFY_API_KEY}:${SHOPIFY_PASSWORD}`).toString('base64');
@@ -43,26 +62,3 @@ async function fetchPrintifyVariants() {
     }))
   );
 }
-
-async function generateMap() {
-  const shopify = await fetchShopifyVariants();
-  const printify = await fetchPrintifyVariants();
-
-  const map = {};
-
-  for (const s of shopify) {
-    if (!s.sku) continue;
-    const match = printify.find(p => p.sku === s.sku);
-    if (match) {
-      map[s.shopifyVariantId] = match.printifyVariantId;
-    }
-  }
-
-  await fs.writeFile('variant-map.json', JSON.stringify(map, null, 2));
-  console.log('✅ Generated variant-map.json');
-}
-
-generateMap().catch(err => {
-  console.error('❌ Failed to generate variant map:', err);
-  process.exit(1);
-});
