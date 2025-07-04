@@ -257,25 +257,44 @@ app.post('/api/printify/order-from-url', async (req, res) => {
   }
 });
 
+const axios = require('axios');
+
 app.get('/products', async (req, res) => {
   try {
-    const [printifyProducts, shopifyProducts] = await Promise.all([
-      fetchPrintifyProducts(),
-      fetchShopifyProducts(),
-    ]);
+    const response = await axios.get(
+      `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+        },
+      }
+    );
 
-    console.log('Printify:', printifyProducts?.length);
-    console.log('Shopify:', shopifyProducts?.length);
+    const products = response.data.slice(0, 5).map((product) => {
+      const firstVariant = product.variants?.[0];
+      const firstImage = product.images?.[0];
 
-    const transformed = transformProducts(printifyProducts, shopifyProducts);
-    console.log('Transformed:', transformed);
+      return {
+        title: product.title,
+        image: firstImage?.src || '', // fallback to empty
+        variantId: firstVariant?.id || '',
+        price: (firstVariant?.price || 1500) / 100, // cents to euros
+        printArea: {
+          width: 300,
+          height: 300,
+          top: 50,
+          left: 50
+        }
+      };
+    });
 
-    res.json({ products: transformed });
+    res.json({ products });
   } catch (error) {
-    console.error('Products error:', error);
-    res.status(500).json({ error: 'Failed to fetch products', details: error.message });
+    console.error("❌ Printify fetch failed:", error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to fetch products from Printify' });
   }
 });
+
 
 
 app.get('/apps/crossword/products', async (req, res) => {
