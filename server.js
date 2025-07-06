@@ -25,7 +25,7 @@ const { createOrder } = printifyService;
 const app = express();
 
 // Shopify raw body middleware for HMAC verification
-app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json' }));
+app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json', limit: '2mb' }));
 
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
