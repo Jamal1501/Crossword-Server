@@ -114,10 +114,6 @@ app.post('/webhooks/orders/create', async (req, res) => {
   res.status(200).send('Webhook received');
 });
 
-// All other middleware comes after webhook
-app.use(bodyParser.json());
-
-
 
 
 const corsOptions = {
