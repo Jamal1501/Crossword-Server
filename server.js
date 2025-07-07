@@ -375,7 +375,7 @@ app.get('/apps/crossword/products', async (req, res) => {
 
         products.push({
           title: product.title,
-          image: shopifyProduct.image?.src || printifyProduct.images?.[0], 
+          image: product.image?.src || printifyProduct.images?.[0], 
           variantId: printifyId,
           shopifyVariantId: shopifyId,
           price: variant.price / 100 || 12.5,
