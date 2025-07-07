@@ -373,6 +373,11 @@ app.get('/apps/crossword/products', async (req, res) => {
     const addedProductIds = new Set();
 
 for (const product of shopifyData.products) {
+  if (product.status !== 'active') {
+    console.log(`⛔ Skipping non-active product: ${product.title} (status: ${product.status})`);
+    continue;
+  }
+
   const matchingVariant = product.variants.find(v => variantMap[v.id.toString()]);
   if (!matchingVariant || addedProductIds.has(product.id)) continue;
 
