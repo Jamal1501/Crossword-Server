@@ -196,16 +196,16 @@ app.get('/admin/regenerate-variant-map', async (req, res) => {
 });
 
 
-app.post('/api/printify/create-test-product', async (req, res) => {
-  try {
-    const { shopifyTitle, shopifyHandle } = req.body;
-    const product = await printifyService.createTestProduct({ shopifyTitle, shopifyHandle });
-    res.json({ success: true, product });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Product creation failed', details: err.message });
-  }
-});
+//app.post('/api/printify/create-test-product', async (req, res) => {
+//try {
+//const { shopifyTitle, shopifyHandle } = req.body;
+//const product = await printifyService.createTestProduct({ shopifyTitle, shopifyHandle });
+//res.json({ success: true, product });
+//} catch (err) {
+//console.error(err);
+//res.status(500).json({ error: 'Product creation failed', details: err.message });
+//}
+//});
 
 
 const submittedOrders = new Set();  // memory-only cache
