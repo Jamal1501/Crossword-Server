@@ -321,7 +321,7 @@ const products = publishedProducts.map((product) => {
     title: product.title,
     image: firstImage?.src || '',
     variantId: matchingVariant?.id || '',
-    price: (matchingVariant?.price || 1500) / 100,
+    price: parseFloat(matchingVariant?.price) || 15,
     printArea: {
       width: 300,
       height: 300,
@@ -378,7 +378,7 @@ app.get('/apps/crossword/products', async (req, res) => {
           image: product.image?.src || printifyProduct.images?.[0], 
           variantId: printifyId,
           shopifyVariantId: shopifyId,
-          price: variant.price / 100 || 12.5,
+          price: parseFloat(variant.price) || 12.5,
           printArea: { width: 300, height: 300, top: 50, left: 50 }
         });
       }
@@ -465,7 +465,7 @@ async function transformProducts(printifyData, shopifyData) {
       id: p.id,
       title: p.title,
       image: p.images[0]?.src || 'https://res.cloudinary.com/demo/image/upload/sample.jpg',
-      price: (p.variants[0]?.price || 0) / 100,
+      price: parseFloat(p.variants[0]?.price) || 0,
       variantId: match?.variants[0]?.id?.toString() || '',
       shopifyProductId: match?.id || '',
       printArea
