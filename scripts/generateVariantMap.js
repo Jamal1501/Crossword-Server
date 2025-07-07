@@ -19,9 +19,12 @@ export async function generateMap() {
       return title === shopifyHandle || title === sProduct.title?.trim().toLowerCase();
     });
 
-    if (matchingPrintify) {
-      map[sProduct.id.toString()] = matchingPrintify.id.toString();
-    }
+ if (matchingPrintify) {
+  map[sProduct.id.toString()] = matchingPrintify.id.toString();
+} else {
+  console.warn(`❌ No Printify match for Shopify product "${sProduct.title}" (handle: ${shopifyHandle})`);
+}
+
   }
 
   await fs.writeFile(new URL('../variant-map.json', import.meta.url), JSON.stringify(map, null, 2));
