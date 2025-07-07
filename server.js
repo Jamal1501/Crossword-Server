@@ -23,6 +23,7 @@ try {
 
 const { createOrder } = printifyService;
 const app = express();
+app.use(cors(corsOptions));
 
 // Shopify raw body middleware for HMAC verification
 app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json', limit: '2mb' }));
@@ -122,7 +123,6 @@ const corsOptions = {
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 };
-app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
