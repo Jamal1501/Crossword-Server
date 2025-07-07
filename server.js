@@ -536,7 +536,15 @@ app.get('/admin/shopify-products', async (req, res) => {
   }
 });
 
+import path from 'path';
+import { fileURLToPath } from 'url';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+app.get('/variant-map.json', (req, res) => {
+  res.sendFile(path.join(__dirname, 'variant-map.json'));
+});
 
 app.get('/debug/printify-variants', async (req, res) => {
   try {
