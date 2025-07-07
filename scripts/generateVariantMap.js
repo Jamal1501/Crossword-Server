@@ -5,61 +5,52 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export async function generateMap() {
-  const shopify = await fetchShopifyVariants();
-  const printify = await fetchPrintifyVariants();
+  const shopifyProducts = await fetchShopifyProducts();
+  const printifyProducts = await fetchPrintifyProducts();
 
   const map = {};
 
-  for (const s of shopify) {
-    if (!s.sku) continue;
-    const match = printify.find(p => p.sku === s.sku);
-    if (match) {
-      map[s.shopifyVariantId] = match.printifyVariantId;
+  for (const sProduct of shopifyProducts) {
+    const shopifyHandle = sProduct.handle?.trim().toLowerCase();
+    if (!shopifyHandle) continue;
+
+    const matchingPrintify = printifyProducts.find(p => {
+      const title = p.title?.trim().toLowerCase();
+      return title === shopifyHandle || title === sProduct.title?.trim().toLowerCase();
+    });
+
+    if (matchingPrintify) {
+      map[sProduct.id.toString()] = matchingPrintify.id.toString();
     }
   }
 
   await fs.writeFile(new URL('../variant-map.json', import.meta.url), JSON.stringify(map, null, 2));
-  console.log('✅ Generated variant-map.json');
+  console.log(`✅ Generated variant-map.json with ${Object.keys(map).length} entries`);
   return map;
 }
 
-async function fetchShopifyVariants() {
+async function fetchShopifyProducts() {
   const { SHOPIFY_STORE, SHOPIFY_API_KEY, SHOPIFY_PASSWORD } = process.env;
   const auth = Buffer.from(`${SHOPIFY_API_KEY}:${SHOPIFY_PASSWORD}`).toString('base64');
 
-  const response = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`, {
+  const res = await fetch(`https://${SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`, {
     headers: {
       'Authorization': `Basic ${auth}`,
       'Content-Type': 'application/json'
     }
   });
 
-  const data = await response.json();
-  return data.products.flatMap(p =>
-    p.variants.map(v => ({
-      shopifyVariantId: v.id.toString(),
-      sku: v.sku
-    }))
-  );
+  const data = await res.json();
+  return data.products || [];
 }
 
-async function fetchPrintifyVariants() {
-  const { PRINTIFY_SHOP_ID, PRINTIFY_API_KEY } = process.env;
-
-  const response = await fetch(`https://api.printify.com/v1/shops/${PRINTIFY_SHOP_ID}/products.json`, {
+async function fetchPrintifyProducts() {
+  const res = await fetch(`https://api.printify.com/v1/shops/${process.env.PRINTIFY_STORE_ID}/products.json`, {
     headers: {
-      Authorization: `Bearer ${PRINTIFY_API_KEY}`,
-      'Content-Type': 'application/json'
+      Authorization: `Bearer ${process.env.PRINTIFY_API_TOKEN}`
     }
   });
 
- const json = await response.json();
-const products = Array.isArray(json.data) ? json.data : json;
-
-return products.flatMap(p =>
-  p.variants.map(v => ({
-    printifyVariantId: v.id,
-    sku: v.sku
-  }))
-);
+  const data = await res.json();
+  return data || [];
 }
