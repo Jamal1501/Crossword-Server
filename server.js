@@ -366,23 +366,28 @@ app.get('/apps/crossword/products', async (req, res) => {
 
     const products = [];
 
-    for (const product of shopifyData.products) {
-      for (const variant of product.variants) {
-        const shopifyId = variant.id.toString();
-        const printifyId = variantMap[shopifyId];
+    const addedProductIds = new Set();
 
-        if (!printifyId) continue;
+for (const product of shopifyData.products) {
+  const matchingVariant = product.variants.find(v => variantMap[v.id.toString()]);
+  if (!matchingVariant || addedProductIds.has(product.id)) continue;
 
-        products.push({
-          title: product.title,
-          image: product.image?.src || printifyProduct.images?.[0], 
-          variantId: printifyId,
-          shopifyVariantId: shopifyId,
-          price: parseFloat(variant.price) || 12.5,
-          printArea: { width: 300, height: 300, top: 50, left: 50 }
-        });
-      }
-    }
+  const shopifyId = matchingVariant.id.toString();
+  const printifyId = variantMap[shopifyId];
+  if (!printifyId) continue;
+
+  products.push({
+    title: product.title,
+    image: product.image?.src || '',
+    variantId: printifyId,
+    shopifyVariantId: shopifyId,
+    price: parseFloat(matchingVariant.price) || 12.5,
+    printArea: { width: 300, height: 300, top: 50, left: 50 }
+  });
+
+  addedProductIds.add(product.id);
+}
+
 
     res.json({ products });
   } catch (err) {
