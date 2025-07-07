@@ -188,9 +188,9 @@ app.get('/admin/regenerate-variant-map', async (req, res) => {
     await generateMap();
     res.send('✅ Variant map regenerated and saved.');
   } catch (err) {
-    console.error('❌ Error generating variant map:', err);
-    res.status(500).send('Failed to regenerate variant map.');
-  }
+  console.error('❌ Error generating variant map:', err.message, err.stack);
+  res.status(500).send(`Failed to regenerate variant map: ${err.message}`);
+}
 });
 
 
