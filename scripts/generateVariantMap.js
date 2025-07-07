@@ -47,7 +47,7 @@ async function fetchShopifyProducts() {
 
 async function fetchPrintifyProducts() {
   const response = await fetch(
-    `https://api.printify.com/v1/shops/${process.env.PRINTIFY_STORE_ID}/products.json`,
+    `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`,
     { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_TOKEN}` } }
   );
 
