@@ -348,85 +348,59 @@ const products = publishedProducts.map((product) => {
 app.get('/apps/crossword/products', async (req, res) => {
   try {
     const latestImage = req.query.image || 'https://res.cloudinary.com/demo/image/upload/sample.jpg';
-
     const json = await fs.readFile('./variant-map.json', 'utf-8');
     const variantMap = JSON.parse(json); // Shopify → Printify
+    const allowedShopifyIds = Object.keys(variantMap);
 
-    const allowedShopifyIds = Object.keys(variantMap); // Shopify variant IDs
+    const shopifyRes = await fetch(`https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`, {
+      headers: {
+        'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD,
+        'Content-Type': 'application/json'
+      }
+    });
 
-// Fetch Shopify product list
-const shopifyRes = await fetch(`https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`, {
-  headers: {
-    'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD,
-    'Content-Type': 'application/json'
-  }
-});
+    if (!shopifyRes.ok) {
+      throw new Error(`Shopify API error: ${shopifyRes.status}`);
+    }
 
-if (!shopifyRes.ok) {
-  throw new Error(`Shopify API error: ${shopifyRes.status}`);
-}
+    const shopifyData = await shopifyRes.json();
+    const products = [];
+    const addedProductIds = new Set();
 
-const shopifyData = await shopifyRes.json();
-const products = [];
-const addedProductIds = new Set();
+    for (const product of shopifyData.products) {
+      if (product.status !== 'active') {
+        console.log(`⛔ Skipping non-active product: ${product.title} (status: ${product.status})`);
+        continue;
+      }
 
-for (const product of shopifyData.products) {
-  if (product.status !== 'active') {
-    console.log(`⛔ Skipping non-active product: ${product.title} (status: ${product.status})`);
-    continue;
-  }
+      const matchingVariant = product.variants.find(v =>
+        allowedShopifyIds.includes(String(v.id))
+      );
 
-  const matchingVariant = product.variants.find(v =>
-    allowedShopifyIds.includes(String(v.id))
-  );
+      if (!matchingVariant) {
+        console.log(`⛔ No matching variant for product: ${product.title}`);
+        continue;
+      }
 
-  if (!matchingVariant) {
-    console.log(`⛔ No matching variant for product: ${product.title}`);
-    continue;
-  }
+      const shopifyId = matchingVariant.id.toString();
+      const printifyId = variantMap[shopifyId];
+      if (!printifyId) continue;
 
-  const shopifyId = matchingVariant.id.toString();
-  const printifyId = variantMap[shopifyId];
-  if (!printifyId) continue;
+      const defaultVariant = product.variants?.[0];
+      if (!defaultVariant) continue;
 
-  const defaultVariant = product.variants?.[0];
-  if (!defaultVariant) continue;
+      products.push({
+        title: product.title,
+        image: product.image?.src || latestImage,
+        variantId: defaultVariant.id,
+        shopifyVariantId: product.id.toString(),
+        printifyProductId: printifyId,
+        price: parseFloat(defaultVariant.price) || 12.5,
+        printArea: { width: 300, height: 300, top: 50, left: 50 }
+      });
 
-  products.push({
-    title: product.title,
-    image: product.image?.src || '',
-    variantId: defaultVariant.id,
-    shopifyVariantId: product.id.toString(),
-    printifyProductId: printifyId,
-    price: parseFloat(defaultVariant.price) || 12.5,
-    printArea: { width: 300, height: 300, top: 50, left: 50 }
-  });
-
-  addedProductIds.add(product.id);
-}
-
-  if (!matchingVariant || addedProductIds.has(product.id)) continue;
-
-  const shopifyId = matchingVariant.id.toString();
-  const printifyId = variantMap[shopifyId];
-  if (!printifyId) continue;
-  const defaultVariant = product.variants?.[0];
-if (!defaultVariant) continue;
-
-  products.push({
-  title: product.title,
-  image: product.image?.src || '',
-  variantId: defaultVariant.id,           // Shopify variant
-  shopifyProductId: product.id.toString(),
-  printifyProductId: printifyId,          // from variant-map.json
-  price: parseFloat(defaultVariant.price) || 12.5,
-  printArea: { width: 300, height: 300, top: 50, left: 50 }
-});
-
-
-  addedProductIds.add(product.id);
-}
-
+      addedProductIds.add(product.id);
+    }
 
     res.json({ products });
   } catch (err) {
