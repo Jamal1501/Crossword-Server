@@ -14,6 +14,7 @@ export async function generateMap() {
     if (!shopifyHandle) continue;
 
     const matchingPrintify = printifyProducts.data.find(p => {
+      if (!p.visible) return false;
       const title = p.title?.trim().toLowerCase();
       return title === shopifyHandle || title === sProduct.title?.trim().toLowerCase();
     });
