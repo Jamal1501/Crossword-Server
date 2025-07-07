@@ -13,7 +13,7 @@ export async function generateMap() {
     const shopifyHandle = sProduct.handle?.trim().toLowerCase();
     if (!shopifyHandle) continue;
 
-    const matchingPrintify = printifyProducts.find(p => {
+    const matchingPrintify = printifyProducts.data.find(p => {
       const title = p.title?.trim().toLowerCase();
       return title === shopifyHandle || title === sProduct.title?.trim().toLowerCase();
     });
