@@ -347,9 +347,15 @@ const products = publishedProducts.map((product) => {
 
 app.get('/apps/crossword/products', async (req, res) => {
   try {
-    const variantMapRaw = await fs.readFile('./variant-map.json', 'utf-8');
-    const variantMap = JSON.parse(variantMapRaw); // Shopify variant ID → Printify variant ID
+    const latestImage = req.query.image || 'https://res.cloudinary.com/demo/image/upload/sample.jpg';
 
+    // Load variant map (Shopify variant ID → Printify variant ID)
+    const json = await fs.readFile('./variant-map.json', 'utf-8');
+    const variantMap = JSON.parse(json);
+
+    const allowedShopifyIds = Object.keys(variantMap); // only mapped variant IDs
+
+    // Fetch Shopify products
     const shopifyRes = await fetch(`https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`, {
       headers: {
         'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD,
@@ -357,10 +363,13 @@ app.get('/apps/crossword/products', async (req, res) => {
       }
     });
 
-    if (!shopifyRes.ok) throw new Error(`Shopify API error: ${shopifyRes.status}`);
-    const shopifyData = await shopifyRes.json();
+    if (!shopifyRes.ok) {
+      throw new Error(`Shopify API error: ${shopifyRes.status}`);
+    }
 
+    const shopifyData = await shopifyRes.json();
     const products = [];
+    const addedProductIds = new Set();
 
     for (const product of shopifyData.products) {
       if (product.status !== 'active') {
@@ -368,33 +377,40 @@ app.get('/apps/crossword/products', async (req, res) => {
         continue;
       }
 
-      for (const variant of product.variants) {
-        const shopifyVariantId = variant.id.toString();
-        const printifyId = variantMap[shopifyVariantId];
-        if (!printifyId) {
-          console.log(`⛔ No variant match for product: ${product.title} (variant ID: ${shopifyVariantId})`);
-          continue;
-        }
+      if (addedProductIds.has(product.id)) continue;
 
-        products.push({
-          title: product.title,
-          image: product.image?.src || '',
-          variantId: variant.id,
-          shopifyVariantId,
-          printifyProductId: printifyId,
-          price: parseFloat(variant.price) || 12.5,
-          printArea: { width: 300, height: 300, top: 50, left: 50 }
-        });
+      const matchingVariant = product.variants.find(v =>
+        allowedShopifyIds.includes(String(v.id))
+      );
+
+      if (!matchingVariant) {
+        console.log(`⛔ No matching variant for product: ${product.title}`);
+        continue;
       }
+
+      const shopifyId = matchingVariant.id.toString();
+      const printifyId = variantMap[shopifyId];
+      if (!printifyId) continue;
+
+      products.push({
+        title: product.title,
+        image: product.image?.src || '',
+        variantId: matchingVariant.id,
+        shopifyVariantId: shopifyId,
+        printifyProductId: printifyId,
+        price: parseFloat(matchingVariant.price) || 12.5,
+        printArea: { width: 300, height: 300, top: 50, left: 50 }
+      });
+
+      addedProductIds.add(product.id);
     }
 
     res.json({ products });
   } catch (err) {
-    console.error('❌ Failed to load products:', err);
+    console.error('❌ Failed to load dynamic products:', err);
     res.status(500).json({ error: 'Failed to load products', details: err.message });
   }
 });
-
 
 
 app.get('/api/printify/products', async (req, res) => {
