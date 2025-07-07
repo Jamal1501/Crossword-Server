@@ -1,4 +1,3 @@
-// scripts/generateVariantMap.js
 import fetch from 'node-fetch';
 import fs from 'fs/promises';
 import dotenv from 'dotenv';
@@ -14,18 +13,16 @@ export async function generateMap() {
     const shopifyHandle = sProduct.handle?.trim().toLowerCase();
     if (!shopifyHandle) continue;
 
-    const matchingPrintify = printifyProducts.data.find(p => {
+    const matchingPrintify = printifyProducts.find(p => {
       const title = p.title?.trim().toLowerCase();
       return title === shopifyHandle || title === sProduct.title?.trim().toLowerCase();
     });
 
-if (matchingPrintify) {
-  map[sProduct.id.toString()] = matchingPrintify.id.toString();
-} else {
-  console.warn(`❌ No Printify match for Shopify product: "${sProduct.title}" (handle: ${shopifyHandle})`);
-}
-
-
+    if (matchingPrintify) {
+      map[sProduct.id.toString()] = matchingPrintify.id.toString();
+    } else {
+      console.warn(`❌ No Printify match for Shopify product "${sProduct.title}" (handle: ${shopifyHandle})`);
+    }
   }
 
   await fs.writeFile(new URL('../variant-map.json', import.meta.url), JSON.stringify(map, null, 2));
@@ -57,9 +54,6 @@ async function fetchPrintifyProducts() {
   if (!response.ok) throw new Error(`Printify API error: ${response.status}`);
   
   const json = await response.json();
-  console.log('📦 Printify products response:', JSON.stringify(json, null, 2)); // ← Add this
+  console.log('📦 Printify products response:', JSON.stringify(json, null, 2));
   return json;
-}
-  const data = await res.json();
-  return data || [];
 }
