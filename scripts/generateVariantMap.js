@@ -18,7 +18,7 @@ export async function generateMap() {
     }
   }
 
-  await fs.writeFile('variant-map.json', JSON.stringify(map, null, 2));
+  await fs.writeFile(new URL('../variant-map.json', import.meta.url), JSON.stringify(map, null, 2));
   console.log('✅ Generated variant-map.json');
   return map;
 }
