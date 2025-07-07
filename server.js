@@ -375,6 +375,8 @@ for (const product of shopifyData.products) {
   const shopifyId = matchingVariant.id.toString();
   const printifyId = variantMap[shopifyId];
   if (!printifyId) continue;
+  const defaultVariant = product.variants?.[0];
+if (!defaultVariant) continue;
 
   products.push({
   title: product.title,
