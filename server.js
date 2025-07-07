@@ -18,6 +18,10 @@ const corsOptions = {
   credentials: true,
 };
 
+
+const { createOrder } = printifyService;
+const app = express();
+
 let variantMap = {};
 try {
   const json = await fs.readFile('./variant-map.json', 'utf-8');
@@ -27,8 +31,7 @@ try {
   console.error('❌ Failed to load variant-map.json:', err.message);
 }
 
-const { createOrder } = printifyService;
-const app = express();
+
 app.use(cors(corsOptions));
 // Shopify raw body middleware for HMAC verification
 app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json', limit: '2mb' }));
