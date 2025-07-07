@@ -330,23 +330,55 @@ const products = publishedProducts.map((product) => {
 
 
 
-
 app.get('/apps/crossword/products', async (req, res) => {
+  try {
     const latestImage = req.query.image || 'https://res.cloudinary.com/demo/image/upload/sample.jpg';
-  res.json({
-    products: [
-      {
-        title: 'Test Mug',
-        image: latestImage,
-        variantId: '79781',
-        shopifyVariantId: '52605494001993',  
-        price: 12.5,
-        printArea: { width: 300, height: 300, top: 50, left: 50 }
-      }
-    ]
-  });
-});
 
+    const json = await fs.readFile('./variant-map.json', 'utf-8');
+    const variantMap = JSON.parse(json); // Shopify → Printify
+
+    const allowedShopifyIds = Object.keys(variantMap); // Shopify variant IDs
+
+    // Fetch Shopify product list
+    const shopifyRes = await fetch(`https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`, {
+      headers: {
+        'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!shopifyRes.ok) {
+      throw new Error(`Shopify API error: ${shopifyRes.status}`);
+    }
+
+    const shopifyData = await shopifyRes.json();
+
+    const products = [];
+
+    for (const product of shopifyData.products) {
+      for (const variant of product.variants) {
+        const shopifyId = variant.id.toString();
+        const printifyId = variantMap[shopifyId];
+
+        if (!printifyId) continue;
+
+        products.push({
+          title: product.title,
+          image: latestImage, // ⬅️ optional: could pull product.images[0].src if needed
+          variantId: printifyId,
+          shopifyVariantId: shopifyId,
+          price: variant.price / 100 || 12.5,
+          printArea: { width: 300, height: 300, top: 50, left: 50 }
+        });
+      }
+    }
+
+    res.json({ products });
+  } catch (err) {
+    console.error('❌ Failed to load dynamic products:', err);
+    res.status(500).json({ error: 'Failed to load products', details: err.message });
+  }
+});
 
 
 app.get('/api/printify/products', async (req, res) => {
