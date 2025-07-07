@@ -59,9 +59,7 @@ async function fetchPrintifyProducts() {
   const json = await response.json();
   console.log('📦 Printify products response:', JSON.stringify(json, null, 2)); // ← Add this
   return json;
-}
-
-  });
+});
 
   const data = await res.json();
   return data || [];
