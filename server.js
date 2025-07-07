@@ -183,6 +183,17 @@ app.get('/api/printify/test-variant', async (req, res) => {
   }
 });
 
+app.get('/admin/regenerate-variant-map', async (req, res) => {
+  try {
+    await generateMap();
+    res.send('✅ Variant map regenerated and saved.');
+  } catch (err) {
+    console.error('❌ Error generating variant map:', err);
+    res.status(500).send('Failed to regenerate variant map.');
+  }
+});
+
+
 app.post('/api/printify/create-test-product', async (req, res) => {
   try {
     const product = await printifyService.createTestProduct();
