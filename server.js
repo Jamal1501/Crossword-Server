@@ -377,13 +377,15 @@ for (const product of shopifyData.products) {
   if (!printifyId) continue;
 
   products.push({
-    title: product.title,
-    image: product.image?.src || '',
-    variantId: printifyId,
-    shopifyVariantId: shopifyId,
-    price: parseFloat(matchingVariant.price) || 12.5,
-    printArea: { width: 300, height: 300, top: 50, left: 50 }
-  });
+  title: product.title,
+  image: product.image?.src || '',
+  variantId: defaultVariant.id,           // Shopify variant
+  shopifyProductId: product.id.toString(),
+  printifyProductId: printifyId,          // from variant-map.json
+  price: parseFloat(defaultVariant.price) || 12.5,
+  printArea: { width: 300, height: 300, top: 50, left: 50 }
+});
+
 
   addedProductIds.add(product.id);
 }
