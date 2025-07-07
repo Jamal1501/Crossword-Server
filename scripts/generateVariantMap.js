@@ -19,11 +19,12 @@ export async function generateMap() {
       return title === shopifyHandle || title === sProduct.title?.trim().toLowerCase();
     });
 
- if (matchingPrintify) {
+if (matchingPrintify) {
   map[sProduct.id.toString()] = matchingPrintify.id.toString();
 } else {
-  console.warn(`❌ No Printify match for Shopify product "${sProduct.title}" (handle: ${shopifyHandle})`);
+  console.warn(`❌ No Printify match for Shopify product: "${sProduct.title}" (handle: ${shopifyHandle})`);
 }
+
 
   }
 
