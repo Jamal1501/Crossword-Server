@@ -11,6 +11,12 @@ import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
 dotenv.config();
 
+const corsOptions = {
+  origin: 'https://loveframes.shop',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+};
 
 let variantMap = {};
 try {
@@ -114,14 +120,6 @@ app.post('/webhooks/orders/create', async (req, res) => {
   res.status(200).send('Webhook received');
 });
 
-
-
-const corsOptions = {
-  origin: 'https://loveframes.shop',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-};
 
 
 app.use(express.json({ limit: '50mb' }));
