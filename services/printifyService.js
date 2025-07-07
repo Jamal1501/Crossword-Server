@@ -79,6 +79,53 @@ export async function uploadImageFromBase64(base64Image) {
   });
 }
 
+export async function createTestProduct({ shopifyTitle, shopifyHandle }) {
+  const payload = {
+    title: shopifyTitle,
+    description: "Auto-created crossword gift product.",
+    blueprint_id: 1, // ← replace with your actual blueprint
+    print_provider_id: 1, // ← replace with your actual provider
+    variants: [
+      {
+        id: 111, // ← replace with actual variant ID
+        price: 1500,
+        is_enabled: true
+      }
+    ],
+    print_areas: [
+      {
+        variant_ids: [111], // ← match above
+        placeholders: [
+          {
+            position: "front",
+            images: [
+              {
+                id: "PLACEHOLDER_IMAGE_ID", // ← optional, can be left empty
+                x: 0.5,
+                y: 0.5,
+                scale: 1,
+                angle: 0
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    external: {
+      handle: `https://your-store.myshopify.com/products/${shopifyHandle}`
+    }
+  };
+
+  const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
+  const response = await safeFetch(url, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+
+  return response;
+}
+
 export async function createOrder({
   imageUrl,
   base64Image,
