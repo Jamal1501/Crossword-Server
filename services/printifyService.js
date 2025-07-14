@@ -134,21 +134,33 @@ export async function createOrder({
   recipient,
 }) {
   if ((!imageUrl && !base64Image) || !variantId || !recipient) {
+    console.error('❌ Missing required fields:', { imageUrl, base64Image, variantId, recipient });
     throw new Error('Missing required fields: imageUrl/base64Image, variantId, recipient');
   }
 
+  console.log('📤 Uploading image to Printify:', imageUrl || '[base64Image]');
   let uploaded;
-  if (imageUrl) {
-    uploaded = await uploadImageFromUrl(imageUrl);
-  } else if (base64Image) {
-    uploaded = await uploadImageFromBase64(base64Image);
+  try {
+    uploaded = imageUrl
+      ? await uploadImageFromUrl(imageUrl)
+      : await uploadImageFromBase64(base64Image);
+    console.log('✅ Image uploaded to Printify:', uploaded);
+  } catch (uploadErr) {
+    console.error('❌ Failed to upload image to Printify:', uploadErr.message);
+    throw uploadErr;
   }
 
-  const shopProductsUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
-  const response = await safeFetch(shopProductsUrl, { headers: authHeaders() });
-  const products = Array.isArray(response.data) ? response.data : response;
-  if (!Array.isArray(products)) {
-    throw new Error(`Expected products to be an array but got: ${JSON.stringify(response).slice(0, 500)}`);
+  console.log('🔍 Fetching all Printify products...');
+  let products;
+  try {
+    const shopProductsUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
+    const response = await safeFetch(shopProductsUrl, { headers: authHeaders() });
+    products = Array.isArray(response.data) ? response.data : response;
+    if (!Array.isArray(products)) throw new Error('Not an array');
+    console.log(`✅ Found ${products.length} Printify products.`);
+  } catch (fetchErr) {
+    console.error('❌ Failed to fetch Printify products:', fetchErr.message);
+    throw fetchErr;
   }
 
   let product = null;
@@ -161,11 +173,18 @@ export async function createOrder({
       product = p;
       printProviderId = p.print_provider_id;
       blueprintId = p.blueprint_id;
+      console.log(`✅ Matched variant ${variantId} to product:`, {
+        title: p.title,
+        blueprintId,
+        printProviderId
+      });
       break;
     }
   }
 
   if (!printProviderId || !blueprintId || !product) {
+    console.error('❌ Could not resolve print_provider_id or blueprint_id for variant:', variantId);
+    console.log('🧪 Scanned variants:', products.flatMap(p => p.variants.map(v => v.id)));
     throw new Error(`Unable to resolve print_provider_id or blueprint_id for variant ${variantId}`);
   }
 
@@ -179,18 +198,17 @@ export async function createOrder({
         print_provider_id: printProviderId,
         blueprint_id: blueprintId,
         print_areas: {
-  front: [
-    {
-      src: uploaded.preview_url,
-      x: position.x,
-      y: position.y,
-      scale: position.scale,
-      angle: position.angle,
-    },
-  ],
-},
-
-      },
+          front: [
+            {
+              src: uploaded.preview_url,
+              x: position.x,
+              y: position.y,
+              scale: position.scale,
+              angle: position.angle,
+            }
+          ]
+        }
+      }
     ],
     shipping_method: 1,
     send_shipping_notification: true,
@@ -205,12 +223,22 @@ export async function createOrder({
     },
   };
 
-  const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
-  return safeFetch(url, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify(payload)
-  });
+  console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
+
+  try {
+    const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
+    const orderRes = await safeFetch(url, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(payload)
+    });
+    console.log('✅ Printify order successfully created:', orderRes?.id || '[no id]');
+    return orderRes;
+  } catch (orderErr) {
+    console.error('❌ Printify order creation failed:', orderErr.message);
+    throw orderErr;
+  }
 }
+
 
 export { safeFetch };
