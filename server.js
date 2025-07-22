@@ -543,7 +543,7 @@ const payload = {
     const { data } = await axios.post(
       'https://api.printify.com/v1/previews',
       payload,
-      { headers: { Authorization: `Bearer ${PRINTIFY_TOKEN}` } }
+      { headers: { Authorization: `Bearer ${PRINTIFY_API_KEY}` } }
     );
 
     res.json({ previewUrl: data.preview_url });
