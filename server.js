@@ -511,7 +511,7 @@ process.on('SIGTERM', () => {
 });
 
 // ---- Printify Preview ----
-const PRINTIFY_TOKEN = process.env.PRINTIFY_TOKEN;
+const PRINTIFY_API_KEY = process.env.PRINTIFY_API_KEY;
 
 app.get('/preview', async (req, res) => {
   const { productId, image, x = 0, y = 0, width = 300, height = 300 } = req.query;
@@ -523,7 +523,7 @@ app.get('/preview', async (req, res) => {
   try {
     // Fetch the first enabled variant for this product
     const variantsRes = await fetch(`https://api.printify.com/v1/catalog/products/${productId}/variants.json`, {
-      headers: { Authorization: `Bearer ${PRINTIFY_TOKEN}` }
+      headers: { Authorization: `Bearer ${PRINTIFY_API_KEY}` }
     });
     const variants = await variantsRes.json();
     const firstEnabled = variants.variants?.find(v => v.is_enabled) || variants.variants?.[0];
