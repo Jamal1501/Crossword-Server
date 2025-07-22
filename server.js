@@ -514,6 +514,8 @@ process.on('SIGTERM', () => {
 const PRINTIFY_API_KEY = process.env.PRINTIFY_API_KEY;
 
 app.get('/preview', async (req, res) => {
+  console.log('Received /preview request:', req.query); // Log the request
+
   const { productId, image, x = 0, y = 0, width = 300, height = 300 } = req.query;
 
   if (!productId || !image) {
