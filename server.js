@@ -521,9 +521,16 @@ app.get('/preview', async (req, res) => {
   }
 
   try {
-    const payload = {
-      product_id: parseInt(productId),
-      variant_ids: [1],
+    // fetch the first enabled variant for this product
+const variantsRes = await fetch(`https://api.printify.com/v1/catalog/products/${productId}/variants.json`, {
+  headers: { Authorization: `Bearer ${PRINTIFY_TOKEN}` }
+});
+const variants = await variantsRes.json();
+const firstEnabled = variants.find(v => v.is_enabled);
+
+const payload = {
+  product_id: parseInt(productId),
+  variant_ids: [firstEnabled?.id || 1],
       files: [
         {
           placement: 'front',
