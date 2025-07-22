@@ -562,6 +562,42 @@ app.get('/variant-map.json', (req, res) => {
   res.sendFile(path.join(__dirname, 'variant-map.json'));
 });
 
+// ---- Printify Preview ----
+const axios = require('axios');
+const PRINTIFY_TOKEN = process.env.PRINTIFY_TOKEN;
+
+app.get('/preview', async (req, res) => {
+  const { productId, image, x = 0, y = 0, width = 300, height = 300 } = req.query;
+
+  if (!productId || !image) {
+    return res.status(400).json({ error: 'Missing productId or image' });
+  }
+
+  try {
+    const payload = {
+      product_id: parseInt(productId),
+      variant_ids: [1],
+      files: [
+        {
+          placement: 'front',
+          image_url: image,
+          position: { x: parseInt(x), y: parseInt(y), width: parseInt(width), height: parseInt(height) }
+        }
+      ]
+    };
+
+    const { data } = await axios.post(
+      'https://api.printify.com/v1/previews',
+      payload,
+      { headers: { Authorization: `Bearer ${PRINTIFY_TOKEN}` } }
+    );
+
+    res.json({ previewUrl: data.preview_url });
+  } catch (err) {
+    console.error(err.response?.data || err.message);
+    res.status(500).json({ error: 'Preview failed' });
+  }
+});
 app.get('/debug/printify-variants', async (req, res) => {
   try {
     const shopId = process.env.PRINTIFY_SHOP_ID;
