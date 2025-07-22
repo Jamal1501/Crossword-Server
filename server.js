@@ -521,9 +521,11 @@ app.get('/preview', async (req, res) => {
   }
 
   try {
+    console.log('PRINTIFY_API_KEY:', process.env.PRINTIFY_API_KEY); // Log the API key
+
     // Fetch the first enabled variant for this product
     const variantsRes = await fetch(`https://api.printify.com/v1/catalog/products/${productId}/variants.json`, {
-      headers: { Authorization: `Bearer ${PRINTIFY_API_KEY}` }
+      headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` }
     });
     const variants = await variantsRes.json();
     const firstEnabled = variants.variants?.find(v => v.is_enabled) || variants.variants?.[0];
@@ -543,7 +545,7 @@ app.get('/preview', async (req, res) => {
     const { data } = await axios.post(
       'https://api.printify.com/v1/previews',
       payload,
-      { headers: { Authorization: `Bearer ${PRINTIFY_API_KEY}` } }
+      { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
     );
 
     res.json({ previewUrl: data.preview_url });
