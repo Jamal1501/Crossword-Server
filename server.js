@@ -544,18 +544,21 @@ app.get('/preview', async (req, res) => {
       ]
     };
 
-    const { data } = await axios.post(
+    const previewRes = await axios.post(
       'https://api.printify.com/v1/previews',
       payload,
       { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
     );
 
-    res.json({ previewUrl: data.preview_url });
+    console.log('Printify API response:', previewRes.data); // Log the Printify API response
+
+    res.json({ previewUrl: previewRes.data.preview_url });
   } catch (err) {
-    console.error(err.response?.data || err.message);
+    console.error('Error in Printify API request:', err.response?.data || err.message);
     res.status(500).json({ error: 'Preview failed' });
   }
 });
+
 
 app.get('/admin/shopify-products', async (req, res) => {
   try {
