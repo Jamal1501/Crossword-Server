@@ -563,7 +563,6 @@ app.get('/variant-map.json', (req, res) => {
 });
 
 // ---- Printify Preview ----
-const axios = require('axios');
 const PRINTIFY_TOKEN = process.env.PRINTIFY_TOKEN;
 
 app.get('/preview', async (req, res) => {
