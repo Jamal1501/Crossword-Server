@@ -9,6 +9,7 @@ import * as printifyService from './services/printifyService.js';
 import { safeFetch } from './services/printifyService.js';
 import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
+import sharp from 'sharp';
 dotenv.config();
 
 const corsOptions = {
@@ -560,8 +561,7 @@ app.get('/preview', async (req, res) => {
 });
 
 
-import fetch from 'node-fetch';
-import sharp from 'sharp';
+
 
 app.get('/apps/crossword/preview', async (req, res) => {
   try {
