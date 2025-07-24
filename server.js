@@ -373,9 +373,12 @@ app.get('/apps/crossword/products', async (req, res) => {
     const addedProductIds = new Set();
 
     for (const product of shopifyData.products) {
-      if (product.status !== 'active') {
-        console.log(`⛔ Skipping non-active product: ${product.title} (status: ${product.status})`);
-        continue;
+    // TEMP: Allow all statuses for testing
+if (!['active', 'draft'].includes(product.status)) {
+  console.log(`⛔ Skipping non-listed product: ${product.title} (status: ${product.status})`);
+  continue;
+}
+
       }
 
       if (addedProductIds.has(product.id)) continue;
