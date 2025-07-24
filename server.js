@@ -560,6 +560,64 @@ app.get('/preview', async (req, res) => {
 });
 
 
+import fetch from 'node-fetch';
+import sharp from 'sharp';
+
+app.get('/apps/crossword/preview', async (req, res) => {
+  try {
+    const {
+      crossword,
+      mockup,
+      top = 0,
+      left = 0,
+      width = 300,
+      height = 300,
+      angle = 0
+    } = req.query;
+
+    if (!crossword || !mockup) {
+      return res.status(400).json({ error: 'Missing crossword or mockup image URL' });
+    }
+
+    const [mockupRes, crosswordRes] = await Promise.all([
+      fetch(mockup),
+      fetch(crossword)
+    ]);
+
+    const [mockupBuffer, crosswordBuffer] = await Promise.all([
+      mockupRes.buffer(),
+      crosswordRes.buffer()
+    ]);
+
+    let crosswordImage = sharp(crosswordBuffer).resize({
+      width: parseInt(width),
+      height: parseInt(height)
+    });
+
+    if (parseInt(angle) !== 0) {
+      crosswordImage = crosswordImage.rotate(parseInt(angle));
+    }
+
+    const compositeImage = await sharp(mockupBuffer)
+      .composite([
+        {
+          input: await crosswordImage.toBuffer(),
+          top: parseInt(top),
+          left: parseInt(left)
+        }
+      ])
+      .png()
+      .toBuffer();
+
+    res.set('Content-Type', 'image/png');
+    res.send(compositeImage);
+  } catch (err) {
+    console.error('❌ Error generating preview:', err);
+    res.status(500).json({ error: 'Failed to generate preview' });
+  }
+});
+
+
 app.get('/admin/shopify-products', async (req, res) => {
   try {
     // Protect route with secret token
