@@ -378,9 +378,7 @@ if (!['active', 'draft'].includes(product.status)) {
   console.log(`⛔ Skipping non-listed product: ${product.title} (status: ${product.status})`);
   continue;
 }
-
-      }
-
+      
       if (addedProductIds.has(product.id)) continue;
 
       const matchingVariant = product.variants.find(v =>
