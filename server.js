@@ -9,7 +9,6 @@ import * as printifyService from './services/printifyService.js';
 import { safeFetch } from './services/printifyService.js';
 import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
-import sharp from 'sharp';
 dotenv.config();
 
 const corsOptions = {
@@ -344,6 +343,24 @@ const products = publishedProducts.map((product) => {
   }
 });
 
+app.get('/apps/crossword/mockup-products', (req, res) => {
+  res.json({
+    products: [
+      {
+        title: "Custom Crossword Mug",
+        image: "https://cdn.shopify.com/s/files/1/0911/1951/8025/files/4235187304372348206_2048.jpg?v=1751919279",
+        variantId: "52614764036425",
+        price: 12.99,
+        printArea: {
+          width: 300,
+          height: 300,
+          top: 50,
+          left: 50
+        }
+      }
+    ]
+  });
+});
 
 
 app.get('/apps/crossword/products', async (req, res) => {
@@ -373,12 +390,11 @@ app.get('/apps/crossword/products', async (req, res) => {
     const addedProductIds = new Set();
 
     for (const product of shopifyData.products) {
-    // TEMP: Allow all statuses for testing
-if (!['active', 'draft'].includes(product.status)) {
-  console.log(`⛔ Skipping non-listed product: ${product.title} (status: ${product.status})`);
-  continue;
-}
-      
+      if (product.status !== 'active') {
+        console.log(`⛔ Skipping non-active product: ${product.title} (status: ${product.status})`);
+        continue;
+      }
+
       if (addedProductIds.has(product.id)) continue;
 
       const matchingVariant = product.variants.find(v =>
@@ -558,63 +574,6 @@ app.get('/preview', async (req, res) => {
   } catch (err) {
     console.error('Error in Printify API request:', err.response?.data || err.message);
     res.status(500).json({ error: 'Preview failed' });
-  }
-});
-
-
-
-
-app.get('/apps/crossword/preview', async (req, res) => {
-  try {
-    const {
-      crossword,
-      mockup,
-      top = 0,
-      left = 0,
-      width = 300,
-      height = 300,
-      angle = 0
-    } = req.query;
-
-    if (!crossword || !mockup) {
-      return res.status(400).json({ error: 'Missing crossword or mockup image URL' });
-    }
-
-    const [mockupRes, crosswordRes] = await Promise.all([
-      fetch(mockup),
-      fetch(crossword)
-    ]);
-
-    const [mockupBuffer, crosswordBuffer] = await Promise.all([
-      mockupRes.buffer(),
-      crosswordRes.buffer()
-    ]);
-
-    let crosswordImage = sharp(crosswordBuffer).resize({
-      width: parseInt(width),
-      height: parseInt(height)
-    });
-
-    if (parseInt(angle) !== 0) {
-      crosswordImage = crosswordImage.rotate(parseInt(angle));
-    }
-
-    const compositeImage = await sharp(mockupBuffer)
-      .composite([
-        {
-          input: await crosswordImage.toBuffer(),
-          top: parseInt(top),
-          left: parseInt(left)
-        }
-      ])
-      .png()
-      .toBuffer();
-
-    res.set('Content-Type', 'image/png');
-    res.send(compositeImage);
-  } catch (err) {
-    console.error('❌ Error generating preview:', err);
-    res.status(500).json({ error: 'Failed to generate preview' });
   }
 });
 
