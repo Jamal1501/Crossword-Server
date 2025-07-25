@@ -343,24 +343,6 @@ const products = publishedProducts.map((product) => {
   }
 });
 
-app.get('/apps/crossword/mockup-products', (req, res) => {
-  res.json({
-    products: [
-      {
-        title: "Custom Crossword Mug",
-        image: "https://cdn.shopify.com/s/files/1/0911/1951/8025/files/4235187304372348206_2048.jpg?v=1751919279",
-        variantId: "52614764036425",
-        price: 12.99,
-        printArea: {
-          width: 300,
-          height: 300,
-          top: 50,
-          left: 50
-        }
-      }
-    ]
-  });
-});
 
 
 app.get('/apps/crossword/products', async (req, res) => {
@@ -671,5 +653,23 @@ app.get('/debug/printify-variants', async (req, res) => {
   }
 });
 
+app.get('/apps/crossword/mockup-products', (req, res) => {
+  res.json({
+    products: [
+      {
+        title: "Custom Crossword Mug",
+        image: "https://cdn.shopify.com/s/files/1/0911/1951/8025/files/4235187304372348206_2048.jpg?v=1751919279",
+        variantId: "52614764036425",
+        price: 12.99,
+        printArea: {
+          width: 300,
+          height: 300,
+          top: 50,
+          left: 50
+        }
+      }
+    ]
+  });
+});
 
 export default app;
