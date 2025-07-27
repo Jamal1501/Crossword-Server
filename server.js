@@ -342,7 +342,7 @@ for (const product of products) {
 
   if (printifyVariantId) {
     product.variantId = printifyVariantId;
-    product.printifyProductId = YOUR_ACTUAL_PRODUCT_ID; // 🔁 Replace this dynamically if you have a full mapping
+    product.printifyProductId = printifyProductId; // 🔁 Replace this dynamically if you have a full mapping
   }
 }
 
