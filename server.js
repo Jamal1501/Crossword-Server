@@ -335,6 +335,17 @@ const products = publishedProducts.map((product) => {
   };
 });
 
+    // Add printifyProductId to each product using variantMap
+for (const product of products) {
+  const shopifyVariantId = String(product.shopifyVariantId);
+  const printifyVariantId = variantMap[shopifyVariantId];
+
+  if (printifyVariantId) {
+    product.variantId = printifyVariantId;
+    product.printifyProductId = YOUR_ACTUAL_PRODUCT_ID; // 🔁 Replace this dynamically if you have a full mapping
+  }
+}
+
 
     res.json({ products });
   } catch (error) {
