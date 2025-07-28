@@ -526,8 +526,10 @@ process.on('SIGTERM', () => {
 // ---- Printify Preview ----
 const PRINTIFY_API_KEY = process.env.PRINTIFY_API_KEY;
 
+import axios from 'axios';
+
 app.get('/preview', async (req, res) => {
-  console.log('Received /preview request:', req.query); // Log the request
+  console.log('Received /preview request:', req.query);
 
   const { productId, image, x = 0, y = 0, width = 300, height = 300 } = req.query;
 
@@ -536,34 +538,44 @@ app.get('/preview', async (req, res) => {
   }
 
   try {
-    console.log('PRINTIFY_API_KEY:', process.env.PRINTIFY_API_KEY); // Log the API key
+    console.log('PRINTIFY_API_KEY:', process.env.PRINTIFY_API_KEY);
 
-    // Fetch the first enabled variant for this product
-    const variantsRes = await fetch(`https://api.printify.com/v1/catalog/products/${productId}/variants.json`, {
-      headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` }
-    });
-    const variants = await variantsRes.json();
-    const firstEnabled = variants.variants?.find(v => v.is_enabled) || variants.variants?.[0];
+    // ✅ Fetch product (correct endpoint for store products)
+    const productRes = await fetch(
+      `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products/${productId}.json`,
+      { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
+    );
 
+    const productData = await productRes.json();
+    const firstEnabled = productData.variants.find(v => v.is_enabled) || productData.variants[0];
+
+    // ✅ Build payload correctly
     const payload = {
-      product_id: parseInt(productId),
-      variant_ids: [firstEnabled?.id || 1],
-      files: [
+      product_id: productId, // keep as string
+      variant_ids: [firstEnabled.id],
+      print_areas: [
         {
           placement: 'front',
-          image_url: image,
-          position: { x: parseInt(x), y: parseInt(y), width: parseInt(width), height: parseInt(height) }
+          images: [
+            {
+              image_url: image,
+              x: parseFloat(x) / 100, // normalize to 0–1 range
+              y: parseFloat(y) / 100,
+              scale: parseFloat(width) / 300, // adjust scaling
+              angle: 0
+            }
+          ]
         }
       ]
     };
 
     const previewRes = await axios.post(
-      'https://api.printify.com/v1/previews',
+      'https://api.printify.com/v1/previews.json',
       payload,
       { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
     );
 
-    console.log('Printify API response:', previewRes.data); // Log the Printify API response
+    console.log('Printify API response:', previewRes.data);
 
     res.json({ previewUrl: previewRes.data.preview_url });
   } catch (err) {
@@ -571,6 +583,7 @@ app.get('/preview', async (req, res) => {
     res.status(500).json({ error: 'Preview failed' });
   }
 });
+
 
 
 app.get('/admin/shopify-products', async (req, res) => {
