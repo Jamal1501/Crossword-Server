@@ -362,7 +362,7 @@ app.get('/apps/crossword/products', async (req, res) => {
   try {
     const latestImage = req.query.image || 'https://res.cloudinary.com/demo/image/upload/sample.jpg';
 
-    // Load variant map (Shopify variant ID → Printify variant ID)
+    // Load variant map (Shopify variant ID → { printifyVariantId, printifyProductId })
     const json = await fs.readFile('./variant-map.json', 'utf-8');
     const variantMap = JSON.parse(json);
 
@@ -402,15 +402,16 @@ app.get('/apps/crossword/products', async (req, res) => {
       }
 
       const shopifyId = matchingVariant.id.toString();
-      const printifyId = variantMap[shopifyId];
-      if (!printifyId) continue;
+      const variantEntry = variantMap[shopifyId]; // ✅ Now it's an object
+
+      if (!variantEntry) continue;
 
       products.push({
         title: product.title,
         image: product.image?.src || '',
-        variantId: matchingVariant.id,
+        variantId: variantEntry.printifyVariantId,    // ✅ Printify variant
         shopifyVariantId: shopifyId,
-        printifyProductId: printifyId,
+        printifyProductId: variantEntry.printifyProductId, // ✅ Printify product
         price: parseFloat(matchingVariant.price) || 12.5,
         printArea: { width: 300, height: 300, top: 50, left: 50 }
       });
@@ -424,7 +425,6 @@ app.get('/apps/crossword/products', async (req, res) => {
     res.status(500).json({ error: 'Failed to load products', details: err.message });
   }
 });
-
 
 app.get('/api/printify/products', async (req, res) => {
   try {
