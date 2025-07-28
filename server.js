@@ -526,8 +526,6 @@ process.on('SIGTERM', () => {
 // ---- Printify Preview ----
 const PRINTIFY_API_KEY = process.env.PRINTIFY_API_KEY;
 
-import axios from 'axios';
-
 app.get('/preview', async (req, res) => {
   console.log('Received /preview request:', req.query);
 
