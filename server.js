@@ -338,7 +338,9 @@ const products = publishedProducts.map((product) => {
     // Add printifyProductId to each product using variantMap
 for (const product of products) {
   const shopifyVariantId = String(product.shopifyVariantId);
-  const printifyVariantId = variantMap[shopifyVariantId];
+const variantEntry = variantMap[shopifyVariantId];
+const printifyVariantId = variantEntry?.printifyVariantId;
+const printifyProductId = variantEntry?.printifyProductId;
 
   if (printifyVariantId) {
     product.variantId = printifyVariantId;
