@@ -356,7 +356,7 @@ const printifyProductId = variantEntry?.printifyProductId;
 
 
     res.json({ products });
-  } catch (error) {
+    catch (error) {
     console.error('❌ Printify fetch failed:', error.response?.data || error.message);
     res.status(500).json({ error: 'Failed to fetch products from Printify' });
   }
