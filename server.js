@@ -321,6 +321,7 @@ const publishedProducts = allProducts.filter(product =>
 );
 
 // ✅ Now transform them safely
+// ✅ Now transform them safely
 const products = publishedProducts.map((product) => {
   const matchingVariant = product.variants.find(variant =>
     allowedVariantIds.includes(variant.id.toString())
@@ -341,27 +342,25 @@ const products = publishedProducts.map((product) => {
   };
 });
 
-    // Add printifyProductId to each product using variantMap
+// Add printifyProductId to each product using variantMap
 for (const product of products) {
   const shopifyVariantId = String(product.shopifyVariantId);
-const variantEntry = variantMap[shopifyVariantId];
-const printifyVariantId = variantEntry?.printifyVariantId;
-const printifyProductId = variantEntry?.printifyProductId;
+  const variantEntry = variantMap[shopifyVariantId];
+  const printifyVariantId = variantEntry?.printifyVariantId;
+  const printifyProductId = variantEntry?.printifyProductId;
 
   if (printifyVariantId) {
     product.variantId = printifyVariantId;
-    product.printifyProductId = printifyProductId; // 🔁 Replace this dynamically if you have a full mapping
+    product.printifyProductId = printifyProductId;
   }
 }
 
+res.json({ products });  // ✅ Close logic here properly
 
-    res.json({ products });
-    catch (error) {
-    console.error('❌ Printify fetch failed:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Failed to fetch products from Printify' });
-  }
-});
-
+} catch (error) {   // ✅ Now this catch correctly pairs with the try
+  console.error('❌ Printify fetch failed:', error.response?.data || error.message);
+  res.status(500).json({ error: 'Failed to fetch products from Printify' });
+}
 
 
 app.get('/apps/crossword/products', async (req, res) => {
