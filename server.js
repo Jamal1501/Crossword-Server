@@ -357,7 +357,7 @@ for (const product of products) {
 
 res.json({ products });  // ✅ Close logic here properly
 
- catch (error) {   // ✅ Now this catch correctly pairs with the try
+} catch (error) {   // ✅ Now this catch correctly pairs with the try
   console.error('❌ Printify fetch failed:', error.response?.data || error.message);
   res.status(500).json({ error: 'Failed to fetch products from Printify' });
 }
