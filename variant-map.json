@@ -1,7 +1,22 @@
 {
-  "52605494001993": 79781,
-  "52610306605385": 76905,
-  "52610306638153": 76905,
-  "52617762963785": 105129,
-  "52614764036425": 79703
+  "52605494001993": {
+    "printifyVariantId": 79781,
+    "printifyProductId": "6877e1bbddd98e402d0a6908"
+  },
+  "52610306605385": {
+    "printifyVariantId": 76905,
+    "printifyProductId": "6877e0893c4ff4dbbd029058"
+  },
+  "52610306638153": {
+    "printifyVariantId": 76905,
+    "printifyProductId": "6877e0893c4ff4dbbd029058"
+  },
+  "52617762963785": {
+    "printifyVariantId": 105129,
+    "printifyProductId": "6877e0893c4ff4dbbd029058"
+  },
+  "52614764036425": {
+    "printifyVariantId": 79703,
+    "printifyProductId": "6877e1bbddd98e402d0a6908"
+  }
 }
