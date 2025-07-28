@@ -301,6 +301,12 @@ app.get('/products', async (req, res) => {
         },
       }
     );
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ Failed to fetch Printify products:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Failed to fetch Printify products' });
+  }
+});
 
     // This is the fix:
 const allowedVariantIds = ['51220006142281', '51220006142282']; // ✅ Your real Shopify variants
@@ -445,11 +451,12 @@ app.get('/api/printify/products', async (req, res) => {
 async function fetchPrintifyProducts() {
   const response = await fetch(
     `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`,
-    { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } },
+    { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
   );
   if (!response.ok) throw new Error(`Printify API error: ${response.status}`);
   return response.json();
 }
+
 
 async function fetchShopifyProducts() {
   const response = await fetch(
@@ -539,10 +546,17 @@ app.get('/preview', async (req, res) => {
     console.log('PRINTIFY_API_KEY:', process.env.PRINTIFY_API_KEY);
 
     // ✅ Fetch product (correct endpoint for store products)
-    const productRes = await fetch(
-      `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products/${productId}.json`,
-      { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
-    );
+const productRes = await fetch(
+  `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products/${productId}.json`,
+  { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
+);
+
+if (!productRes.ok) {
+  const err = await productRes.json();
+  console.error('❌ Product fetch failed:', err);
+  return res.status(500).json({ error: 'Printify product not found', details: err });
+}
+
 
     const productData = await productRes.json();
     const firstEnabled = productData.variants.find(v => v.is_enabled) || productData.variants[0];
