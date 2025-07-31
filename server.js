@@ -301,12 +301,6 @@ app.get('/products', async (req, res) => {
         },
       }
     );
-    res.json(response.data);
-  } catch (err) {
-    console.error('❌ Failed to fetch Printify products:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to fetch Printify products' });
-  }
-});
 
     // This is the fix:
 const allowedVariantIds = ['51220006142281', '51220006142282']; // ✅ Your real Shopify variants
@@ -320,7 +314,6 @@ const publishedProducts = allProducts.filter(product =>
   )
 );
 
-// ✅ Now transform them safely
 // ✅ Now transform them safely
 const products = publishedProducts.map((product) => {
   const matchingVariant = product.variants.find(variant =>
@@ -342,32 +335,21 @@ const products = publishedProducts.map((product) => {
   };
 });
 
-// Add printifyProductId to each product using variantMap
-for (const product of products) {
-  const shopifyVariantId = String(product.shopifyVariantId);
-  const variantEntry = variantMap[shopifyVariantId];
-  const printifyVariantId = variantEntry?.printifyVariantId;
-  const printifyProductId = variantEntry?.printifyProductId;
 
-  if (printifyVariantId) {
-    product.variantId = printifyVariantId;
-    product.printifyProductId = printifyProductId;
+    res.json({ products });
+  } catch (error) {
+    console.error('❌ Printify fetch failed:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to fetch products from Printify' });
   }
-}
+});
 
-res.json({ products });  // ✅ Close logic here properly
-
-} catch (error) {   // ✅ Now this catch correctly pairs with the try
-  console.error('❌ Printify fetch failed:', error.response?.data || error.message);
-  res.status(500).json({ error: 'Failed to fetch products from Printify' });
-}
 
 
 app.get('/apps/crossword/products', async (req, res) => {
   try {
     const latestImage = req.query.image || 'https://res.cloudinary.com/demo/image/upload/sample.jpg';
 
-    // Load variant map (Shopify variant ID → { printifyVariantId, printifyProductId })
+    // Load variant map (Shopify variant ID → Printify variant ID)
     const json = await fs.readFile('./variant-map.json', 'utf-8');
     const variantMap = JSON.parse(json);
 
@@ -407,16 +389,15 @@ app.get('/apps/crossword/products', async (req, res) => {
       }
 
       const shopifyId = matchingVariant.id.toString();
-      const variantEntry = variantMap[shopifyId]; // ✅ Now it's an object
-
-      if (!variantEntry) continue;
+      const printifyId = variantMap[shopifyId];
+      if (!printifyId) continue;
 
       products.push({
         title: product.title,
         image: product.image?.src || '',
-        variantId: variantEntry.printifyVariantId,    // ✅ Printify variant
+        variantId: matchingVariant.id,
         shopifyVariantId: shopifyId,
-        printifyProductId: variantEntry.printifyProductId, // ✅ Printify product
+        printifyProductId: printifyId,
         price: parseFloat(matchingVariant.price) || 12.5,
         printArea: { width: 300, height: 300, top: 50, left: 50 }
       });
@@ -430,6 +411,7 @@ app.get('/apps/crossword/products', async (req, res) => {
     res.status(500).json({ error: 'Failed to load products', details: err.message });
   }
 });
+
 
 app.get('/api/printify/products', async (req, res) => {
   try {
@@ -450,12 +432,11 @@ app.get('/api/printify/products', async (req, res) => {
 async function fetchPrintifyProducts() {
   const response = await fetch(
     `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`,
-    { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
+    { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } },
   );
   if (!response.ok) throw new Error(`Printify API error: ${response.status}`);
   return response.json();
 }
-
 
 async function fetchShopifyProducts() {
   const response = await fetch(
@@ -533,7 +514,7 @@ process.on('SIGTERM', () => {
 const PRINTIFY_API_KEY = process.env.PRINTIFY_API_KEY;
 
 app.get('/preview', async (req, res) => {
-  console.log('Received /preview request:', req.query);
+  console.log('Received /preview request:', req.query); // Log the request
 
   const { productId, image, x = 0, y = 0, width = 300, height = 300 } = req.query;
 
@@ -542,51 +523,34 @@ app.get('/preview', async (req, res) => {
   }
 
   try {
-    console.log('PRINTIFY_API_KEY:', process.env.PRINTIFY_API_KEY);
+    console.log('PRINTIFY_API_KEY:', process.env.PRINTIFY_API_KEY); // Log the API key
 
-    // ✅ Fetch product (correct endpoint for store products)
-const productRes = await fetch(
-  `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products/${productId}.json`,
-  { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
-);
+    // Fetch the first enabled variant for this product
+    const variantsRes = await fetch(`https://api.printify.com/v1/catalog/products/${productId}/variants.json`, {
+      headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` }
+    });
+    const variants = await variantsRes.json();
+    const firstEnabled = variants.variants?.find(v => v.is_enabled) || variants.variants?.[0];
 
-if (!productRes.ok) {
-  const err = await productRes.json();
-  console.error('❌ Product fetch failed:', err);
-  return res.status(500).json({ error: 'Printify product not found', details: err });
-}
-
-
-    const productData = await productRes.json();
-    const firstEnabled = productData.variants.find(v => v.is_enabled) || productData.variants[0];
-
-    // ✅ Build payload correctly
     const payload = {
-      product_id: productId, // keep as string
-      variant_ids: [firstEnabled.id],
-      print_areas: [
+      product_id: parseInt(productId),
+      variant_ids: [firstEnabled?.id || 1],
+      files: [
         {
           placement: 'front',
-          images: [
-            {
-              image_url: image,
-              x: parseFloat(x) / 100, // normalize to 0–1 range
-              y: parseFloat(y) / 100,
-              scale: parseFloat(width) / 300, // adjust scaling
-              angle: 0
-            }
-          ]
+          image_url: image,
+          position: { x: parseInt(x), y: parseInt(y), width: parseInt(width), height: parseInt(height) }
         }
       ]
     };
 
     const previewRes = await axios.post(
-      'https://api.printify.com/v1/previews.json',
+      'https://api.printify.com/v1/previews',
       payload,
       { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
     );
 
-    console.log('Printify API response:', previewRes.data);
+    console.log('Printify API response:', previewRes.data); // Log the Printify API response
 
     res.json({ previewUrl: previewRes.data.preview_url });
   } catch (err) {
@@ -594,7 +558,6 @@ if (!productRes.ok) {
     res.status(500).json({ error: 'Preview failed' });
   }
 });
-
 
 
 app.get('/admin/shopify-products', async (req, res) => {
