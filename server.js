@@ -301,66 +301,47 @@ app.get('/products', async (req, res) => {
         },
       }
     );
-    res.json(response.data);
-  } catch (err) {
-    console.error('❌ Failed to fetch Printify products:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Failed to fetch Printify products' });
+
+    const allowedVariantIds = ['51220006142281', '51220006142282'];
+    const allProducts = Array.isArray(response.data) ? response.data : response.data.data;
+
+    const publishedProducts = allProducts.filter(product =>
+      product.variants?.some(variant =>
+        allowedVariantIds.includes(variant.id.toString())
+      )
+    );
+
+    const products = publishedProducts.map((product) => {
+      const matchingVariant = product.variants.find(variant =>
+        allowedVariantIds.includes(variant.id.toString())
+      );
+      const firstImage = product.images?.[0];
+
+      return {
+        title: product.title,
+        image: firstImage?.src || '',
+        variantId: matchingVariant?.id || '',
+        price: parseFloat(matchingVariant?.price) || 15,
+        printArea: { width: 300, height: 300, top: 50, left: 50 }
+      };
+    });
+
+    // Map Printify IDs
+    for (const product of products) {
+      const shopifyVariantId = String(product.variantId); // fixed
+      const variantEntry = variantMap[shopifyVariantId];
+      if (variantEntry) {
+        product.variantId = variantEntry.printifyVariantId;
+        product.printifyProductId = variantEntry.printifyProductId;
+      }
+    }
+
+    res.json({ products });
+  } catch (error) {
+    console.error('❌ Printify fetch failed:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to fetch products from Printify' });
   }
 });
-
-    // This is the fix:
-const allowedVariantIds = ['51220006142281', '51220006142282']; // ✅ Your real Shopify variants
-
-const allProducts = Array.isArray(response.data) ? response.data : response.data.data;
-
-// ✅ Only include Printify products that contain a variant published in Shopify
-const publishedProducts = allProducts.filter(product =>
-  product.variants?.some(variant =>
-    allowedVariantIds.includes(variant.id.toString())
-  )
-);
-
-// ✅ Now transform them safely
-// ✅ Now transform them safely
-const products = publishedProducts.map((product) => {
-  const matchingVariant = product.variants.find(variant =>
-    allowedVariantIds.includes(variant.id.toString())
-  );
-  const firstImage = product.images?.[0];
-
-  return {
-    title: product.title,
-    image: firstImage?.src || '',
-    variantId: matchingVariant?.id || '',
-    price: parseFloat(matchingVariant?.price) || 15,
-    printArea: {
-      width: 300,
-      height: 300,
-      top: 50,
-      left: 50,
-    },
-  };
-});
-
-// Add printifyProductId to each product using variantMap
-for (const product of products) {
-  const shopifyVariantId = String(product.shopifyVariantId);
-  const variantEntry = variantMap[shopifyVariantId];
-  const printifyVariantId = variantEntry?.printifyVariantId;
-  const printifyProductId = variantEntry?.printifyProductId;
-
-  if (printifyVariantId) {
-    product.variantId = printifyVariantId;
-    product.printifyProductId = printifyProductId;
-  }
-}
-
-res.json({ products });  // ✅ Close logic here properly
-
-} catch (error) {   // ✅ Now this catch correctly pairs with the try
-  console.error('❌ Printify fetch failed:', error.response?.data || error.message);
-  res.status(500).json({ error: 'Failed to fetch products from Printify' });
-}
 
 
 app.get('/apps/crossword/products', async (req, res) => {
