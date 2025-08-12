@@ -10,7 +10,14 @@ import * as printifyService from './services/printifyService.js';
 import { safeFetch } from './services/printifyService.js';
 import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
 dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PRINT_AREAS_PATH = path.join(__dirname, 'print-areas.json');
+
 
 const corsOptions = {
   origin: 'https://loveframes.shop',
@@ -35,14 +42,34 @@ try {
 // --- NEW: load print areas ---
 let printAreas = {};
 try {
-  const json = await fs.readFile('./print-areas.json', 'utf-8');
+  const json = await fs.readFile(PRINT_AREAS_PATH, 'utf-8');
   printAreas = JSON.parse(json);
-  console.log('✅ Loaded print-areas.json with', Object.keys(printAreas).length, 'entries');
+  console.log('✅ Loaded print-areas.json from', PRINT_AREAS_PATH, 'with', Object.keys(printAreas).length, 'entries');
 } catch (err) {
-  console.warn('ℹ️ No print-areas.json found; falling back to defaults');
+  console.warn('ℹ️ No print-areas.json at', PRINT_AREAS_PATH, '→ fallback:', err.message);
 }
 
+
 app.use(cors(corsOptions));
+
+// Debug route: confirm the server actually loaded your file
+app.get('/print-areas', (req, res) => {
+  res.json({
+    path: PRINT_AREAS_PATH,
+    count: Object.keys(printAreas).length,
+    sampleKeys: Object.keys(printAreas).slice(0, 20)
+  });
+});
+
+// Dynamic area route used by the theme
+app.get('/print-area/:variantId', (req, res) => {
+  const id = String(req.params.variantId);
+  const area = printAreas[id];
+  if (!area) {
+    return res.status(404).json({ ok: false, error: 'No print area for variant', variantId: id });
+  }
+  return res.json({ ok: true, area });
+});
 
 // Shopify raw body middleware for HMAC verification
 app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json', limit: '2mb' }));
