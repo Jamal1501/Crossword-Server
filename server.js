@@ -671,9 +671,6 @@ app.get('/admin/shopify-products', async (req, res) => {
 });
 
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 app.get('/variant-map.json', (req, res) => {
   res.sendFile(path.join(__dirname, 'variant-map.json'));
 });
