@@ -1,3 +1,4 @@
+// server.js  (updated)
 import fs from 'fs/promises';
 import express from 'express';
 import crypto from 'crypto';
@@ -18,10 +19,10 @@ const corsOptions = {
   credentials: true,
 };
 
-
 const { createOrder } = printifyService;
 const app = express();
 
+// --- load variant map (existing) ---
 let variantMap = {};
 try {
   const json = await fs.readFile('./variant-map.json', 'utf-8');
@@ -31,12 +32,32 @@ try {
   console.error('❌ Failed to load variant-map.json:', err.message);
 }
 
+// --- NEW: load print areas ---
+let printAreas = {};
+try {
+  const json = await fs.readFile('./print-areas.json', 'utf-8');
+  printAreas = JSON.parse(json);
+  console.log('✅ Loaded print-areas.json with', Object.keys(printAreas).length, 'entries');
+} catch (err) {
+  console.warn('ℹ️ No print-areas.json found; falling back to defaults');
+}
 
 app.use(cors(corsOptions));
+
 // Shopify raw body middleware for HMAC verification
 app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json', limit: '2mb' }));
 
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
+
+// --- NEW: public API to fetch per-variant print area ---
+app.get('/print-area/:variantId', (req, res) => {
+  const id = String(req.params.variantId);
+  const area = printAreas[id];
+  if (!area) {
+    return res.status(404).json({ ok: false, error: 'No print area for variant', variantId: id });
+  }
+  return res.json({ ok: true, area });
+});
 
 async function handlePrintifyOrder(order) {
   const items = order.line_items.map((item) => {
@@ -52,7 +73,6 @@ async function handlePrintifyOrder(order) {
     };
   });
 
-
   for (const item of items) {
     if (!item.custom_image || !item.design_specs || !item.variant_id) {
       console.warn('⚠️ Skipping item due to missing data:', item);
@@ -65,12 +85,8 @@ async function handlePrintifyOrder(order) {
       continue;
     }
 
-    const position = {
-      x: 0.5,
-      y: 0.5,
-      scale: 1.0,
-      angle: 0
-    };
+    // You can later use printAreas[item.variant_id] here if you want server-side sizing rules.
+    const position = { x: 0.5, y: 0.5, scale: 1.0, angle: 0 };
 
     const recipient = {
       name: `${order.shipping_address.first_name} ${order.shipping_address.last_name}`,
