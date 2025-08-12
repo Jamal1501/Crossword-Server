@@ -60,42 +60,64 @@ app.get('/print-area/:variantId', (req, res) => {
 });
 
 async function handlePrintifyOrder(order) {
+  // Flatten useful fields from Shopify line items
   const items = order.line_items.map((item) => {
     const custom_image = item.properties?.find(p => p.name === '_custom_image')?.value;
     const design_specs_raw = item.properties?.find(p => p.name === '_design_specs')?.value;
-    const design_specs = design_specs_raw ? JSON.parse(design_specs_raw) : null;
+    const design_specs = design_specs_raw ? (() => { try { return JSON.parse(design_specs_raw); } catch { return null; } })() : null;
 
     return {
       title: item.title,
-      variant_id: item.variant_id, // Shopify variant ID
+      variant_id: item.variant_id,            // Shopify variant ID
       custom_image,
       design_specs
     };
   });
 
   for (const item of items) {
-    if (!item.custom_image || !item.design_specs || !item.variant_id) {
-      console.warn('⚠️ Skipping item due to missing data:', item);
+    if (!item.custom_image || !item.variant_id) {
+      console.warn('⚠️ Skipping item (missing image or variant):', {
+        title: item.title, variant: item.variant_id, hasImage: !!item.custom_image
+      });
       continue;
     }
 
-    const printifyVariantId = variantMap[String(item.variant_id)];
+    const shopifyVid = String(item.variant_id);
+    const printifyVariantId = variantMap[shopifyVid];
     if (!printifyVariantId) {
-      console.warn('❌ No Printify variant ID found for Shopify variant:', item.variant_id);
+      console.warn(`⛔ No Printify mapping for Shopify variant ${shopifyVid}. Known keys sample:`,
+        Object.keys(variantMap).slice(0, 10));
       continue;
     }
 
-    // You can later use printAreas[item.variant_id] here if you want server-side sizing rules.
-    const position = { x: 0.5, y: 0.5, scale: 1.0, angle: 0 };
+    // Optional: per-variant print area (width/height/top/left)
+    const area = printAreas?.[shopifyVid] || null;
+
+    // Derive scale from design_specs.size (prefer percentages); fallback 1.0
+    let scale = 1.0;
+    const sizeVal = item.design_specs?.size;
+    if (typeof sizeVal === 'string') {
+      const s = sizeVal.trim();
+      if (s.endsWith('%')) {
+        const pct = parseFloat(s);
+        if (!Number.isNaN(pct)) scale = Math.max(0.1, Math.min(2, pct / 100));
+      } else if (s.endsWith('px') && area?.width) {
+        const px = parseFloat(s);
+        if (!Number.isNaN(px)) scale = Math.max(0.1, Math.min(2, px / area.width));
+      }
+    }
+
+    // We center the artwork; angle 0 for now. (Top/left handled in editor UI.)
+    const position = { x: 0.5, y: 0.5, scale, angle: 0 };
 
     const recipient = {
-      name: `${order.shipping_address.first_name} ${order.shipping_address.last_name}`,
+      name: `${order.shipping_address?.first_name || ''} ${order.shipping_address?.last_name || ''}`.trim(),
       email: order.email,
       phone: order.phone || '',
-      address1: order.shipping_address.address1,
-      city: order.shipping_address.city,
-      zip: order.shipping_address.zip,
-      country: order.shipping_address.country_code,
+      address1: order.shipping_address?.address1 || '',
+      city: order.shipping_address?.city || '',
+      zip: order.shipping_address?.zip || '',
+      country: order.shipping_address?.country_code || ''
     };
 
     try {
@@ -103,14 +125,18 @@ async function handlePrintifyOrder(order) {
         imageUrl: item.custom_image,
         variantId: printifyVariantId,
         position,
-        recipient
+        recipient,
+        // pass through for service to use if supported
+        printArea: area || undefined,
+        meta: { shopifyVid, title: item.title }
       });
-      console.log('✅ Printify order created:', response?.id || '[no id]');
+      console.log('✅ Printify order created:', response?.id || '[no id]', { shopifyVid, printifyVariantId, scale });
     } catch (err) {
-      console.error('❌ Failed to create Printify order:', err);
+      console.error('❌ Failed to create Printify order:', { shopifyVid, printifyVariantId, scale, err: err?.message || err });
     }
   }
 }
+
 
 app.post('/webhooks/orders/create', async (req, res) => {
   const hmac = req.headers['x-shopify-hmac-sha256'];
@@ -319,7 +345,6 @@ app.get('/products', async (req, res) => {
     );
 
     // This is the fix:
-const allowedVariantIds = ['51220006142281', '51220006142282']; // ✅ Your real Shopify variants
 
 const allProducts = Array.isArray(response.data) ? response.data : response.data.data;
 
