@@ -76,15 +76,7 @@ app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json', li
 
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
-// --- NEW: public API to fetch per-variant print area ---
-app.get('/print-area/:variantId', (req, res) => {
-  const id = String(req.params.variantId);
-  const area = printAreas[id];
-  if (!area) {
-    return res.status(404).json({ ok: false, error: 'No print area for variant', variantId: id });
-  }
-  return res.json({ ok: true, area });
-});
+
 
 async function handlePrintifyOrder(order) {
   // Flatten useful fields from Shopify line items
@@ -371,37 +363,23 @@ app.get('/products', async (req, res) => {
       }
     );
 
-    // This is the fix:
-
+  
 const allProducts = Array.isArray(response.data) ? response.data : response.data.data;
 
-// ✅ Only include Printify products that contain a variant published in Shopify
-const publishedProducts = allProducts.filter(product =>
-  product.variants?.some(variant =>
-    allowedVariantIds.includes(variant.id.toString())
-  )
-);
-
-// ✅ Now transform them safely
-const products = publishedProducts.map((product) => {
-  const matchingVariant = product.variants.find(variant =>
-    allowedVariantIds.includes(variant.id.toString())
-  );
+const products = allProducts.map((product) => {
   const firstImage = product.images?.[0];
+  const firstVariant = product.variants?.[0];
 
   return {
     title: product.title,
     image: firstImage?.src || '',
-    variantId: matchingVariant?.id || '',
-    price: parseFloat(matchingVariant?.price) || 15,
-    printArea: {
-      width: 300,
-      height: 300,
-      top: 50,
-      left: 50,
-    },
+    variantId: firstVariant?.id || '',
+    price: parseFloat(firstVariant?.price) || 15,
+    printArea: { width: 300, height: 300, top: 50, left: 50 }
   };
 });
+res.json({ products });
+
 
 
     res.json({ products });
@@ -415,65 +393,41 @@ const products = publishedProducts.map((product) => {
 
 app.get('/apps/crossword/products', async (req, res) => {
   try {
-    const latestImage = req.query.image || 'https://res.cloudinary.com/demo/image/upload/sample.jpg';
+    const DEFAULT_AREA = { width: 300, height: 300, top: 50, left: 50 };
 
-    // Load variant map (Shopify variant ID → Printify variant ID)
-    const json = await fs.readFile('./variant-map.json', 'utf-8');
-    const variantMap = JSON.parse(json);
+    const shopifyRes = await fetch(
+      `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`,
+      { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD, 'Content-Type': 'application/json' } }
+    );
+    if (!shopifyRes.ok) throw new Error(`Shopify API error: ${shopifyRes.status}`);
 
-    const allowedShopifyIds = Object.keys(variantMap); // only mapped variant IDs
+    const { products: shopifyProducts } = await shopifyRes.json();
 
-    // Fetch Shopify products
-    const shopifyRes = await fetch(`https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`, {
-      headers: {
-        'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD,
-        'Content-Type': 'application/json'
-      }
-    });
+    const out = [];
+    for (const p of shopifyProducts) {
+      if (!['active','draft'].includes(p.status)) continue;
 
-    if (!shopifyRes.ok) {
-      throw new Error(`Shopify API error: ${shopifyRes.status}`);
-    }
+      // prefer a variant we have a mapping for; otherwise take the first variant
+      const mappedIds = new Set(Object.keys(variantMap));
+      const preferred = p.variants.find(v => mappedIds.has(String(v.id))) || p.variants[0];
+      if (!preferred) continue;
 
-    const shopifyData = await shopifyRes.json();
-    const products = [];
-    const addedProductIds = new Set();
+      const shopifyId = String(preferred.id);
+      const printifyId = variantMap[shopifyId] || null;
+      const img = p.image?.src || p.images?.[0]?.src || '';
 
-    for (const product of shopifyData.products) {
-      if (!['active', 'draft'].includes(product.status)) {
-        console.log(`⛔ Skipping non-active product: ${product.title} (status: ${product.status})`);
-        continue;
-      }
-
-      if (addedProductIds.has(product.id)) continue;
-
-      const matchingVariant = product.variants.find(v =>
-        allowedShopifyIds.includes(String(v.id))
-      );
-
-      if (!matchingVariant) {
-        console.log(`⛔ No matching variant for product: ${product.title}`);
-        continue;
-      }
-
-      const shopifyId = matchingVariant.id.toString();
-      const printifyId = variantMap[shopifyId];
-      if (!printifyId) continue;
-
-      products.push({
-        title: product.title,
-        image: product.image?.src || '',
-        variantId: matchingVariant.id,
-        shopifyVariantId: shopifyId,
-        printifyProductId: printifyId,
-        price: parseFloat(matchingVariant.price) || 12.5,
-        printArea: { width: 300, height: 300, top: 50, left: 50 }
+      out.push({
+        title: p.title,
+        image: img,
+        variantId: preferred.id,                // number
+        shopifyVariantId: shopifyId,            // string
+        printifyProductId: printifyId,          // may be null
+        price: parseFloat(preferred.price) || 0,
+        printArea: printAreas[shopifyId] || DEFAULT_AREA
       });
-
-      addedProductIds.add(product.id);
     }
 
-    res.json({ products });
+    res.json({ products: out });
   } catch (err) {
     console.error('❌ Failed to load dynamic products:', err);
     res.status(500).json({ error: 'Failed to load products', details: err.message });
