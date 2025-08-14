@@ -418,21 +418,12 @@ app.get('/apps/crossword/products', async (req, res) => {
 
       out.push({
   title: p.title,
+  handle: p.handle || '',
   image: img || '',
-  
-  // Always set Shopify variant ID as string
   shopifyVariantId: String(preferred?.id || ''),
-
-  // Always set Printify product ID (falls back to null if no mapping)
   printifyProductId: variantMap[String(preferred?.id)] || null,
-
-  // Keep numeric variantId (Shopify ID number)
   variantId: preferred?.id || null,
-
-  // Price as float (0 if missing)
   price: parseFloat(preferred?.price) || 0,
-
-  // Always set a print area (falls back to DEFAULT_AREA if missing)
   printArea: printAreas[String(preferred?.id)] || DEFAULT_AREA
 });
     }
