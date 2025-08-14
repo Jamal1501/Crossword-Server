@@ -417,14 +417,24 @@ app.get('/apps/crossword/products', async (req, res) => {
       const img = p.image?.src || p.images?.[0]?.src || '';
 
       out.push({
-        title: p.title,
-        image: img,
-        variantId: preferred.id,                // number
-        shopifyVariantId: shopifyId,            // string
-        printifyProductId: printifyId,          // may be null
-        price: parseFloat(preferred.price) || 0,
-        printArea: printAreas[shopifyId] || DEFAULT_AREA
-      });
+  title: p.title,
+  image: img || '',
+  
+  // Always set Shopify variant ID as string
+  shopifyVariantId: String(preferred?.id || ''),
+
+  // Always set Printify product ID (falls back to null if no mapping)
+  printifyProductId: variantMap[String(preferred?.id)] || null,
+
+  // Keep numeric variantId (Shopify ID number)
+  variantId: preferred?.id || null,
+
+  // Price as float (0 if missing)
+  price: parseFloat(preferred?.price) || 0,
+
+  // Always set a print area (falls back to DEFAULT_AREA if missing)
+  printArea: printAreas[String(preferred?.id)] || DEFAULT_AREA
+});
     }
 
     res.json({ products: out });
