@@ -19,12 +19,22 @@ const __dirname = path.dirname(__filename);
 const PRINT_AREAS_PATH = path.join(__dirname, 'print-areas.json');
 
 
-const corsOptions = {
-  origin: 'https://loveframes.shop',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-};
+22: const whitelist = [
+23:   /^https:\/\/[^.]+\.myshopify\.com$/,          // your preview/admin storefront
+24:   /^https:\/\/[a-z0-9-]+\.shopifypreview\.com$/, // theme previews
+25:   /^https:\/\/loveframes\.shop$/                 // production
+26: ];
+27: const corsOptions = {
+28:   origin: (origin, callback) => {
+29:     if (!origin) return callback(null, true); // allow server-to-server / curl
+30:     const ok = whitelist.some((re) => re.test(origin));
+31:     return ok ? callback(null, true) : callback(new Error('Not allowed by CORS: ' + origin));
+32:   },
+33:   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+34:   allowedHeaders: ['Content-Type', 'Authorization'],
+35:   credentials: true,
+36: };
+
 
 const { createOrder } = printifyService;
 const app = express();
