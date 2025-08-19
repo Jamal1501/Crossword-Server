@@ -451,6 +451,31 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
   try {
     const { imageUrl, productId, variantId } = req.query;
 
+    // 1. Upload crossword image to Printify
+    const uploadedImage = await uploadImageFromUrl(imageUrl);
+
+    // 2. Apply image to product (updates mockups in Printify)
+    const updatedProduct = await applyImageToProduct(productId, variantId, uploadedImage.id);
+
+    // 3. Extract preview mockup URLs
+    const previewImages = updatedProduct.images.map(img => img.src);
+
+    // 4. Return them to frontend
+    res.json({
+      success: true,
+      previewImages
+    });
+  } catch (err) {
+    console.error("❌ Preview product error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+app.get('/apps/crossword/preview-product', async (req, res) => {
+  try {
+    const { imageUrl, productId, variantId } = req.query;
+
     if (!imageUrl || !productId || !variantId) {
       return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
     }
