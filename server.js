@@ -445,6 +445,35 @@ app.get('/apps/crossword/products', async (req, res) => {
   }
 });
 
+import { uploadImageFromUrl, applyImageToProduct, fetchProduct } from './services/printifyService.js';
+
+app.get('/apps/crossword/preview-product', async (req, res) => {
+  try {
+    const { imageUrl, productId, variantId } = req.query;
+
+    if (!imageUrl || !productId || !variantId) {
+      return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
+    }
+
+    // 1. Upload the crossword image
+    const uploaded = await uploadImageFromUrl(imageUrl);
+
+    // 2. Apply it to the chosen product + variant
+    await applyImageToProduct(productId, parseInt(variantId), uploaded.id);
+
+    // 3. Fetch the updated product (mockup should now exist)
+    const product = await fetchProduct(productId);
+
+    res.json({
+      success: true,
+      uploadedImage: uploaded,
+      product,
+    });
+  } catch (err) {
+    console.error("❌ Preview generation failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/api/printify/products', async (req, res) => {
   try {
