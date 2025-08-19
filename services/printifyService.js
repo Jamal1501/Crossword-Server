@@ -276,5 +276,17 @@ export async function applyImageToProduct(productId, variantId, imageId) {
   });
 }
 
+export async function fetchProduct(productId) {
+  if (!productId) {
+    throw new Error("Missing productId");
+  }
+
+  const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
+
+  return safeFetch(url, {
+    method: 'GET',
+    headers: authHeaders(),
+  });
+}
 
 export { safeFetch };
