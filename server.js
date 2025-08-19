@@ -462,6 +462,26 @@ app.get('/api/printify/products', async (req, res) => {
   }
 });
 
+
+// GET a single Printify product (raw JSON, includes mockup image URLs when available)
+app.get('/api/printify/products/:productId', async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const url = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products/${productId}.json`;
+    const data = await safeFetch(url, {
+      headers: {
+        Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'Crossword-Preview/1.0'
+      },
+    });
+    res.json(data);
+  } catch (err) {
+    console.error('❌ Failed to fetch product:', err.message);
+    res.status(500).json({ error: 'Failed to fetch product', details: err.message });
+  }
+});
+
 async function fetchPrintifyProducts() {
   const response = await fetch(
     `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`,
