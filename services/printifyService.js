@@ -240,41 +240,51 @@ export async function createOrder({
   }
 }
 
-export async function applyImageToProduct(productId, variantId, imageId) {
-  if (!productId || !variantId || !imageId) {
-    throw new Error("Missing productId, variantId or imageId");
-  }
-
+export async function applyImageToProduct(productId, variantId, uploadedImageId) {
+  // 1. Get current product config
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
+  const product = await safeFetch(url, { headers: authHeaders() });
 
-  const payload = {
-    print_areas: [
+  // 2. Reuse all variants, only patch the print_areas
+  const allVariantIds = product.variants.map(v => v.id);
+
+  const updatedPrintAreas = product.print_areas.map(area => ({
+    ...area,
+    variant_ids: allVariantIds,
+    placeholders: [
       {
-        variant_ids: [parseInt(variantId)],
-        placeholders: [
+        position: "front",
+        images: [
           {
-            position: "front",
-            images: [
-              {
-                id: imageId,   // ← comes from uploadImageFromUrl/Base64 response
-                x: 0.5,
-                y: 0.5,
-                scale: 1,
-                angle: 0
-              }
-            ]
+            id: uploadedImageId,
+            x: 0.5,
+            y: 0.5,
+            scale: 1,
+            angle: 0
           }
         ]
       }
     ]
+  }));
+
+  const payload = {
+    title: product.title,
+    description: product.description,
+    blueprint_id: product.blueprint_id,
+    print_provider_id: product.print_provider_id,
+    variants: product.variants,   // keep all variants
+    print_areas: updatedPrintAreas
   };
 
-  return safeFetch(url, {
+  // 3. PUT back to Printify
+  const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
+  return safeFetch(updateUrl, {
     method: 'PUT',
     headers: authHeaders(),
     body: JSON.stringify(payload)
   });
 }
+
 
 export async function fetchProduct(productId) {
   if (!productId) {
