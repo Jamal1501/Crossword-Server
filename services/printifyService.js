@@ -240,5 +240,41 @@ export async function createOrder({
   }
 }
 
+export async function applyImageToProduct(productId, variantId, imageId) {
+  if (!productId || !variantId || !imageId) {
+    throw new Error("Missing productId, variantId or imageId");
+  }
+
+  const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
+
+  const payload = {
+    print_areas: [
+      {
+        variant_ids: [parseInt(variantId)],
+        placeholders: [
+          {
+            position: "front",
+            images: [
+              {
+                id: imageId,   // ← comes from uploadImageFromUrl/Base64 response
+                x: 0.5,
+                y: 0.5,
+                scale: 1,
+                angle: 0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+
+  return safeFetch(url, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
 
 export { safeFetch };
