@@ -859,9 +859,9 @@ app.get("/apps/crossword/all-print-areas", async (req, res) => {
         headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` },
       }
     );
-    const products = await productsRes.json();
+    const productsJson = await productsRes.json();
+    const products = productsJson.data || []; // ✅ FIX
 
-    // loop through products
     const results = {};
     for (const prod of products) {
       const detailRes = await fetch(
