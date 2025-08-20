@@ -412,7 +412,29 @@ app.get('/apps/crossword/products', async (req, res) => {
     if (!shopifyRes.ok) throw new Error(`Shopify API error: ${shopifyRes.status}`);
 
     const { products: shopifyProducts } = await shopifyRes.json();
+   
+        // Map Printify variantId -> productId for later use
+   const printifyListUrl = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`;
+   const printifyList = await safeFetch(printifyListUrl, {
+     headers: {
+       Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+       'Content-Type': 'application/json',
+     },
+   });
+   
+   // Ensure we have an array of products
+   const pifyArray = Array.isArray(printifyList?.data)
+     ? printifyList.data
+     : (Array.isArray(printifyList) ? printifyList : []);
+   
+   const pifyVariantToProduct = new Map();
+   for (const prod of pifyArray) {
+     for (const v of (prod.variants || [])) {
+       pifyVariantToProduct.set(v.id, prod.id);
+     }
+   }
 
+     
     const out = [];
     for (const p of shopifyProducts) {
       if (!['active','draft'].includes(p.status)) continue;
@@ -426,16 +448,25 @@ app.get('/apps/crossword/products', async (req, res) => {
       const printifyId = variantMap[shopifyId] || null;
       const img = p.image?.src || p.images?.[0]?.src || '';
 
-      out.push({
+      const printifyVariantId = variantMap[shopifyId] || null;
+const printifyProductId = printifyVariantId ? (pifyVariantToProduct.get(printifyVariantId) || null) : null;
+
+out.push({
+  // 🔑 new fields for editor preview
+  id: printifyProductId,      // Printify product ID
+  printifyVariantId,          // Printify variant ID
+
+  // 🔑 keep all your old fields so nothing breaks
   title: p.title,
   handle: p.handle || '',
   image: img || '',
   shopifyVariantId: String(preferred?.id || ''),
-  printifyProductId: variantMap[String(preferred?.id)] || null,
+  printifyProductId: variantMap[String(preferred?.id)] || null, // keep legacy
   variantId: preferred?.id || null,
   price: parseFloat(preferred?.price) || 0,
   printArea: printAreas[String(preferred?.id)] || DEFAULT_AREA
 });
+
     }
 
     res.json({ products: out });
