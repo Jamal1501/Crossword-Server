@@ -805,4 +805,84 @@ app.get('/apps/crossword/mockup-products', (req, res) => {
   });
 });
 
+// =============================
+// Get print areas for one product
+// =============================
+app.get("/apps/crossword/product-print-areas", async (req, res) => {
+  try {
+    const { productId } = req.query;
+    if (!productId) {
+      return res.status(400).json({ error: "Missing productId" });
+    }
+
+    // call Printify API
+    const shopRes = await fetch("https://api.printify.com/v1/shops.json", {
+      headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` },
+    });
+    const shops = await shopRes.json();
+    const shopId = shops[0].id; // assuming you only use one shop
+
+    const productRes = await fetch(
+      `https://api.printify.com/v1/shops/${shopId}/products/${productId}.json`,
+      {
+        headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` },
+      }
+    );
+    const product = await productRes.json();
+
+    return res.json({
+      productId,
+      title: product.title,
+      print_areas: product.print_areas || [],
+    });
+  } catch (err) {
+    console.error("Error fetching product print areas:", err);
+    res.status(500).json({ error: "Failed to fetch product print areas" });
+  }
+});
+
+// =============================
+// Get print areas for all products
+// =============================
+app.get("/apps/crossword/all-print-areas", async (req, res) => {
+  try {
+    const shopRes = await fetch("https://api.printify.com/v1/shops.json", {
+      headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` },
+    });
+    const shops = await shopRes.json();
+    const shopId = shops[0].id;
+
+    // get all products
+    const productsRes = await fetch(
+      `https://api.printify.com/v1/shops/${shopId}/products.json`,
+      {
+        headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` },
+      }
+    );
+    const products = await productsRes.json();
+
+    // loop through products
+    const results = {};
+    for (const prod of products) {
+      const detailRes = await fetch(
+        `https://api.printify.com/v1/shops/${shopId}/products/${prod.id}.json`,
+        {
+          headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` },
+        }
+      );
+      const detail = await detailRes.json();
+      results[prod.id] = {
+        title: detail.title,
+        print_areas: detail.print_areas || [],
+      };
+    }
+
+    return res.json(results);
+  } catch (err) {
+    console.error("Error fetching all product print areas:", err);
+    res.status(500).json({ error: "Failed to fetch all product print areas" });
+  }
+});
+
+
 export default app;
