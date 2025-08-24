@@ -478,7 +478,7 @@ out.push({
 
 import { uploadImageFromUrl, applyImageToProduct, fetchProduct } from './services/printifyService.js';
 
-app.get('/apps/crossword/preview-product', async (req, res) => {
+app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
   try {
     const { imageUrl, productId, variantId } = req.query;
 
