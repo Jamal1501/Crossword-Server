@@ -193,14 +193,6 @@ app.post('/webhooks/orders/create', async (req, res) => {
 
   const order = JSON.parse(rawBody.toString());
   console.log('✅ Verified webhook for order:', order.id);
-
-  // 🚫 Idempotency guard: skip duplicate deliveries / redeploy overlap
-  if (processedShopifyOrders.has(order.id)) {
-    console.log('🛑 Duplicate webhook skipped for order', order.id);
-    return res.status(200).send('ok (duplicate ignored)');
-  }
-  processedShopifyOrders.add(order.id);
-
   await handlePrintifyOrder(order);
   res.status(200).send('Webhook received');
 });
