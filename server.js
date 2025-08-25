@@ -584,61 +584,6 @@ async function fetchShopifyProducts() {
   if (!response.ok) throw new Error(`Shopify API error: ${response.status}`);
   return response.json();
 }
-// --- ADMIN: build Shopify-long -> Printify variant map (view in browser, copy-paste JSON) ---
-app.get('/apps/crossword/admin/build-variant-map', async (req, res) => {
-  try {
-    const norm = (s='') => s.toString().trim().toLowerCase();
-
-    // Fetch Shopify products
-    const sRes = await fetch(`https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`, {
-      headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD, 'Content-Type': 'application/json' },
-    });
-    if (!sRes.ok) throw new Error(`Shopify API error: ${sRes.status}`);
-    const sJson = await sRes.json();
-    const sProducts = sJson.products || [];
-
-    // Fetch Printify products
-    const pRes = await fetch(`https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`, {
-      headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` },
-    });
-    if (!pRes.ok) throw new Error(`Printify API error: ${pRes.status}`);
-    const pJson = await pRes.json();
-    const pProducts = Array.isArray(pJson.data) ? pJson.data : pJson;
-
-    // Index Printify by normalized title
-    const pByTitle = new Map();
-    for (const p of pProducts) pByTitle.set(norm(p.title), p);
-
-    // Build "Color / Size" -> Printify variant id for each Printify product
-    const variantMap = {}; // Shopify long variant id -> Printify variant id
-
-    for (const sp of sProducts) {
-      const pMatch = pByTitle.get(norm(sp.title));
-      if (!pMatch) continue;
-
-      const pvByTitle = new Map();
-      for (const v of (pMatch.variants || [])) pvByTitle.set(norm(v.title), v.id);
-
-      for (const sv of (sp.variants || [])) {
-        const key = norm(sv.title); // e.g., "White / 3XL"
-        const pvId = pvByTitle.get(key);
-        if (pvId) {
-          variantMap[String(sv.id)] = pvId;
-        } else {
-          // Soft fallback: partial match on color or size if formatting differs slightly
-          const guess = [...pvByTitle.entries()].find(([k]) => key.includes(k));
-          if (guess) variantMap[String(sv.id)] = guess[1];
-        }
-      }
-    }
-
-    res.setHeader('Content-Type', 'application/json');
-    res.send(JSON.stringify(variantMap, null, 2));
-  } catch (err) {
-    console.error('❌ build-variant-map failed:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 
 async function transformProducts(printifyData, shopifyData) {
