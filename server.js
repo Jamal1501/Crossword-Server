@@ -1,4 +1,4 @@
-// server.js  (updated)
+// server.js (cleaned)
 import fs from 'fs/promises';
 import express from 'express';
 import crypto from 'crypto';
@@ -12,35 +12,54 @@ import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import axios from 'axios';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PRINT_AREAS_PATH = path.join(__dirname, 'print-areas.json');
 
-
 const whitelist = [
-   /^https:\/\/[^.]+\.myshopify\.com$/,          // your preview/admin storefront
-   /^https:\/\/[a-z0-9-]+\.shopifypreview\.com$/, // theme previews
-   /^https:\/\/loveframes\.shop$/                 // production
- ];
- const corsOptions = {
-   origin: (origin, callback) => {
-     if (!origin) return callback(null, true); // allow server-to-server / curl
-     const ok = whitelist.some((re) => re.test(origin));
-     return ok ? callback(null, true) : callback(new Error('Not allowed by CORS: ' + origin));
-   },
-   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-   allowedHeaders: ['Content-Type', 'Authorization'],
-   credentials: true,
- };
-
+  /^https:\/\/[^.]+\.myshopify\.com$/,          // your preview/admin storefront
+  /^https:\/\/[a-z0-9-]+\.shopifypreview\.com$/, // theme previews
+  /^https:\/\/loveframes\.shop$/                 // production
+];
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // allow server-to-server / curl
+    const ok = whitelist.some((re) => re.test(origin));
+    return ok ? callback(null, true) : callback(new Error('Not allowed by CORS: ' + origin));
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'X-Shopify-Topic',
+    'X-Shopify-Order-Id',
+    'X-Shopify-Hmac-Sha256',
+    'X-Shopify-Webhook-Id'
+  ],
+  credentials: true,
+};
 
 const { createOrder } = printifyService;
 const app = express();
+
+// --- CORS & parsers (run BEFORE routes) ---
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+app.use((req, res, next) => { res.setHeader('Vary', 'Origin'); next(); });
+
+// Shopify webhook needs raw body (must be before any JSON parser)
+app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json', limit: '2mb' }));
+
+// Normal JSON parsers for everything else
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
 // Idempotency for Shopify webhooks (process each order only once per server lifetime)
 const processedShopifyOrders = new Set();
-
 
 // --- load variant map (existing) ---
 let variantMap = {};
@@ -52,7 +71,7 @@ try {
   console.error('❌ Failed to load variant-map.json:', err.message);
 }
 
-// --- NEW: load print areas ---
+// --- load print areas ---
 let printAreas = {};
 try {
   const json = await fs.readFile(PRINT_AREAS_PATH, 'utf-8');
@@ -61,9 +80,6 @@ try {
 } catch (err) {
   console.warn('ℹ️ No print-areas.json at', PRINT_AREAS_PATH, '→ fallback:', err.message);
 }
-
-
-app.use(cors(corsOptions));
 
 // Debug route: confirm the server actually loaded your file
 app.get('/print-areas', (req, res) => {
@@ -84,12 +100,7 @@ app.get('/print-area/:variantId', (req, res) => {
   return res.json({ ok: true, area });
 });
 
-// Shopify raw body middleware for HMAC verification
-app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json', limit: '2mb' }));
-
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
-
-
 
 async function handlePrintifyOrder(order) {
   // Flatten useful fields from Shopify line items
@@ -169,22 +180,14 @@ async function handlePrintifyOrder(order) {
   }
 }
 
-
 app.post('/webhooks/orders/create', async (req, res) => {
   const hmac = req.headers['x-shopify-hmac-sha256'];
   const rawBody = req.body;
-
-  console.log('SECRET IN USE:', SHOPIFY_WEBHOOK_SECRET);
-  console.log('RAW BODY STRING:', rawBody.toString());
-  console.log('RAW BODY BUFFER:', rawBody);
 
   const digest = crypto
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
     .update(rawBody, 'utf8')
     .digest('base64');
-
-  console.log('CALCULATED DIGEST:', digest);
-  console.log('SHOPIFY HMAC HEADER:', hmac);
 
   if (digest !== hmac) {
     console.warn('⚠️ Webhook HMAC verification failed.');
@@ -193,15 +196,17 @@ app.post('/webhooks/orders/create', async (req, res) => {
 
   const order = JSON.parse(rawBody.toString());
   console.log('✅ Verified webhook for order:', order.id);
+
+  // 🚫 prevent duplicate processing across redeploys / retries
+  if (processedShopifyOrders.has(order.id)) {
+    console.log('🛑 Duplicate webhook skipped for order', order.id);
+    return res.status(200).send('ok (duplicate ignored)');
+  }
+  processedShopifyOrders.add(order.id);
+
   await handlePrintifyOrder(order);
   res.status(200).send('Webhook received');
 });
-
-
-
-
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -265,23 +270,10 @@ app.get('/admin/regenerate-variant-map', async (req, res) => {
     variantMap = await generateMap();
     res.send('✅ Variant map regenerated and saved.');
   } catch (err) {
-  console.error('❌ Error generating variant map:', err.message, err.stack);
-  res.status(500).send(`Failed to regenerate variant map: ${err.message}`);
-}
+    console.error('❌ Error generating variant map:', err.message, err.stack);
+    res.status(500).send(`Failed to regenerate variant map: ${err.message}`);
+  }
 });
-
-
-//app.post('/api/printify/create-test-product', async (req, res) => {
-//try {
-//const { shopifyTitle, shopifyHandle } = req.body;
-//const product = await printifyService.createTestProduct({ shopifyTitle, shopifyHandle });
-//res.json({ success: true, product });
-//} catch (err) {
-//console.error(err);
-//res.status(500).json({ error: 'Product creation failed', details: err.message });
-//}
-//});
-
 
 const submittedOrders = new Set();  // memory-only cache
 
@@ -291,18 +283,15 @@ app.post('/api/printify/order', async (req, res) => {
     const { orderId } = req.body;
     console.log('Received orderId:', orderId);
 
+    if (!orderId) {
+      return res.status(400).json({ error: 'Missing orderId', success: false });
+    }
 
-if (!orderId) {
-  return res.status(400).json({ error: 'Missing orderId', success: false });
-}
-
-if (submittedOrders.has(orderId)) {
-  console.log('Duplicate order blocked:', orderId);
-  return res.status(200).json({ success: true, duplicate: true });
-}
-
-submittedOrders.add(orderId);
-
+    if (submittedOrders.has(orderId)) {
+      console.log('Duplicate order blocked:', orderId);
+      return res.status(200).json({ success: true, duplicate: true });
+    }
+    submittedOrders.add(orderId);
 
     if (!imageUrl && !base64Image) {
       return res.status(400).json({ error: 'Either imageUrl or base64Image is required', success: false });
@@ -326,7 +315,9 @@ submittedOrders.add(orderId);
   }
 });
 
-app.post('/save-crossword', async (req, res) => {
+// Explicit preflight + CORS for this route (belt & suspenders)
+app.options('/save-crossword', cors(corsOptions));
+app.post('/save-crossword', cors(corsOptions), async (req, res) => {
   try {
     const { image } = req.body;
 
@@ -364,8 +355,6 @@ app.post('/api/printify/order-from-url', async (req, res) => {
   }
 });
 
-import axios from 'axios';
-
 app.get('/products', async (req, res) => {
   try {
     const response = await axios.get(
@@ -377,33 +366,26 @@ app.get('/products', async (req, res) => {
       }
     );
 
-  
-const allProducts = Array.isArray(response.data) ? response.data : response.data.data;
+    const allProducts = Array.isArray(response.data) ? response.data : response.data.data;
 
-const products = allProducts.map((product) => {
-  const firstImage = product.images?.[0];
-  const firstVariant = product.variants?.[0];
+    const products = allProducts.map((product) => {
+      const firstImage = product.images?.[0];
+      const firstVariant = product.variants?.[0];
 
-  return {
-    title: product.title,
-    image: firstImage?.src || '',
-    variantId: firstVariant?.id || '',
-    price: parseFloat(firstVariant?.price) || 15,
-    printArea: { width: 300, height: 300, top: 50, left: 50 }
-  };
-});
-res.json({ products });
-
-
-
+      return {
+        title: product.title,
+        image: firstImage?.src || '',
+        variantId: firstVariant?.id || '',
+        price: parseFloat(firstVariant?.price) || 15,
+        printArea: { width: 300, height: 300, top: 50, left: 50 }
+      };
+    });
     res.json({ products });
   } catch (error) {
     console.error('❌ Printify fetch failed:', error.response?.data || error.message);
     res.status(500).json({ error: 'Failed to fetch products from Printify' });
   }
 });
-
-
 
 app.get('/apps/crossword/products', async (req, res) => {
   try {
@@ -416,29 +398,28 @@ app.get('/apps/crossword/products', async (req, res) => {
     if (!shopifyRes.ok) throw new Error(`Shopify API error: ${shopifyRes.status}`);
 
     const { products: shopifyProducts } = await shopifyRes.json();
-   
-        // Map Printify variantId -> productId for later use
-   const printifyListUrl = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`;
-   const printifyList = await safeFetch(printifyListUrl, {
-     headers: {
-       Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
-       'Content-Type': 'application/json',
-     },
-   });
-   
-   // Ensure we have an array of products
-   const pifyArray = Array.isArray(printifyList?.data)
-     ? printifyList.data
-     : (Array.isArray(printifyList) ? printifyList : []);
-   
-   const pifyVariantToProduct = new Map();
-   for (const prod of pifyArray) {
-     for (const v of (prod.variants || [])) {
-       pifyVariantToProduct.set(v.id, prod.id);
-     }
-   }
 
-     
+    // Map Printify variantId -> productId for later use
+    const printifyListUrl = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`;
+    const printifyList = await safeFetch(printifyListUrl, {
+      headers: {
+        Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    // Ensure we have an array of products
+    const pifyArray = Array.isArray(printifyList?.data)
+      ? printifyList.data
+      : (Array.isArray(printifyList) ? printifyList : []);
+
+    const pifyVariantToProduct = new Map();
+    for (const prod of pifyArray) {
+      for (const v of (prod.variants || [])) {
+        pifyVariantToProduct.set(v.id, prod.id);
+      }
+    }
+
     const out = [];
     for (const p of shopifyProducts) {
       if (!['active','draft'].includes(p.status)) continue;
@@ -449,28 +430,26 @@ app.get('/apps/crossword/products', async (req, res) => {
       if (!preferred) continue;
 
       const shopifyId = String(preferred.id);
-      const printifyId = variantMap[shopifyId] || null;
+      const printifyVariantId = variantMap[shopifyId] || null;
       const img = p.image?.src || p.images?.[0]?.src || '';
 
-      const printifyVariantId = variantMap[shopifyId] || null;
-const printifyProductId = printifyVariantId ? (pifyVariantToProduct.get(printifyVariantId) || null) : null;
+      const printifyProductId = printifyVariantId ? (pifyVariantToProduct.get(printifyVariantId) || null) : null;
 
-out.push({
-  // 🔑 new fields for editor preview
-  id: printifyProductId,      // Printify product ID
-  printifyVariantId,          // Printify variant ID
+      out.push({
+        // new fields for editor preview
+        id: printifyProductId,      // Printify product ID
+        printifyVariantId,          // Printify variant ID
 
-  // 🔑 keep all your old fields so nothing breaks
-  title: p.title,
-  handle: p.handle || '',
-  image: img || '',
-  shopifyVariantId: String(preferred?.id || ''),
-  printifyProductId: variantMap[String(preferred?.id)] || null, // keep legacy
-  variantId: preferred?.id || null,
-  price: parseFloat(preferred?.price) || 0,
-  printArea: printAreas[String(preferred?.id)] || DEFAULT_AREA
-});
-
+        // keep all your old fields so nothing breaks
+        title: p.title,
+        handle: p.handle || '',
+        image: img || '',
+        shopifyVariantId: String(preferred?.id || ''),
+        printifyProductId: variantMap[String(preferred?.id)] || null, // legacy
+        variantId: preferred?.id || null,
+        price: parseFloat(preferred?.price) || 0,
+        printArea: printAreas[String(preferred?.id)] || DEFAULT_AREA
+      });
     }
 
     res.json({ products: out });
@@ -505,7 +484,6 @@ app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 app.get('/apps/crossword/preview-product', async (req, res) => {
   try {
@@ -551,7 +529,6 @@ app.get('/api/printify/products', async (req, res) => {
   }
 });
 
-
 // GET a single Printify product (raw JSON, includes mockup image URLs when available)
 app.get('/api/printify/products/:productId', async (req, res) => {
   try {
@@ -589,7 +566,6 @@ async function fetchShopifyProducts() {
   return response.json();
 }
 
-
 async function transformProducts(printifyData, shopifyData) {
   const products = await Promise.all(printifyData.data.map(async p => {
     const match = shopifyData.products.find(s =>
@@ -607,11 +583,10 @@ async function transformProducts(printifyData, shopifyData) {
         }
       });
 
-      const variant = variantRes?.variants?.find(v => v.id === p.variants[0]?.id);  
+      const variant = variantRes?.variants?.find(v => v.id === p.variants[0]?.id);
       console.log('Variant object for', p.title, JSON.stringify(variant, null, 2));
       const area = variant?.placeholders?.find(p => p.position === 'front');
       console.log('Fetched print area for:', p.title, area);
-
 
       if (area) {
         printArea = {
@@ -641,7 +616,6 @@ async function transformProducts(printifyData, shopifyData) {
   };
 }
 
-
 const port = process.env.PORT || 8888;
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${port}`);
@@ -653,7 +627,6 @@ process.on('SIGTERM', () => {
   server.close(() => console.log('HTTP server closed'));
 });
 
-// ---- Printify Preview ----
 const PRINTIFY_API_KEY = process.env.PRINTIFY_API_KEY;
 
 app.get('/preview', async (req, res) => {
@@ -702,10 +675,8 @@ app.get('/preview', async (req, res) => {
   }
 });
 
-
 app.get('/admin/shopify-products', async (req, res) => {
   try {
-    // Protect route with secret token
     const auth = req.headers.authorization;
     if (auth !== `Bearer ${process.env.ADMIN_SECRET}`) {
       return res.status(403).json({ error: 'Unauthorized' });
@@ -729,7 +700,7 @@ app.get('/admin/shopify-products', async (req, res) => {
 
     const data = await response.json();
 
-    const clean = data.products.flatMap(product => 
+    const clean = data.products.flatMap(product =>
       product.variants.map(variant => ({
         productTitle: product.title,
         variantTitle: variant.title,
@@ -745,12 +716,9 @@ app.get('/admin/shopify-products', async (req, res) => {
   }
 });
 
-
 app.get('/variant-map.json', (req, res) => {
   res.sendFile(path.join(__dirname, 'variant-map.json'));
 });
-
-
 
 app.get('/debug/printify-variants', async (req, res) => {
   try {
@@ -888,6 +856,5 @@ app.get("/apps/crossword/all-print-areas", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch all product print areas" });
   }
 });
-
 
 export default app;
