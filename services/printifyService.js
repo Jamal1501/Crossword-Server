@@ -267,13 +267,19 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId)
     ]
   }));
 
+  // @LF-ANCHOR: restrict-to-variant
+const finalPrintAreas = updatedPrintAreas.map(a => ({
+  ...a,
+  variant_ids: Array.isArray(a.variant_ids) ? a.variant_ids.filter(id => id === variantId) : [variantId],
+}));
+
   const payload = {
     title: product.title,
     description: product.description,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,   // keep all variants
-    print_areas: updatedPrintAreas
+    print_areas: finalPrintAreas
   };
 
   // 3. PUT back to Printify
