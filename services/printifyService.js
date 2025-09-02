@@ -240,7 +240,7 @@ export async function createOrder({
   }
 }
 
-export async function applyImageToProduct(productId, variantId, uploadedImageId) {
+export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
   // 1. Get current product config
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
@@ -255,13 +255,13 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId)
       {
         position: "front",
         images: [
-          {
-            id: uploadedImageId,
-            x: 0.5,
-            y: 0.5,
-            scale: 1,
-            angle: 0
-          }
+        {
+  id: uploadedImageId,
+  x: placement?.x ?? 0.5,
+  y: placement?.y ?? 0.5,
+  scale: placement?.scale ?? 1,
+  angle: placement?.angle ?? 0
+}
         ]
       }
     ]
