@@ -489,6 +489,14 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
   try {
     const { imageUrl, productId, variantId } = req.query;
 
+        const position = {
+      x: req.query.x ? parseFloat(req.query.x) : 0.5,
+      y: req.query.y ? parseFloat(req.query.y) : 0.5,
+      scale: req.query.scale ? parseFloat(req.query.scale) : 1,
+      angle: req.query.angle ? parseFloat(req.query.angle) : 0,
+    };
+
+    
     if (!imageUrl || !productId || !variantId) {
       return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
     }
@@ -497,7 +505,7 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
     const uploaded = await uploadImageFromUrl(imageUrl);
 
     // 2. Apply it to the chosen product + variant
-    await applyImageToProduct(productId, parseInt(variantId), uploaded.id);
+    await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
 
     // 3. Fetch the updated product (mockup should now exist)
     const product = await fetchProduct(productId);
