@@ -25,6 +25,22 @@ async function safeFetch(url, options = {}) {
   return res.status === 204 ? null : await res.json();
 }
 
+async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
+  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
+  const data = await safeFetch(url, { headers: authHeaders() });
+  const v = data?.variants?.find(v => v.id === parseInt(variantId));
+  const ph = v?.placeholders?.find(p => p.position === 'front');
+  return ph ? { width: ph.width, height: ph.height } : null;
+}
+
+function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
+  if (!Aw || !Ah || !Iw || !Ih) return requested ?? 1;
+  const capByHeight = (Ah * Iw) / (Aw * Ih);
+  const maxScale = Math.min(1, capByHeight);
+  return Math.min(requested ?? 1, maxScale);
+}
+
+
 export async function uploadImageFromUrl(imageUrl) {
   if (!imageUrl || typeof imageUrl !== 'string') {
     throw new Error('Invalid imageUrl input');
@@ -188,6 +204,26 @@ export async function createOrder({
     throw new Error(`Unable to resolve print_provider_id or blueprint_id for variant ${variantId}`);
   }
 
+// clamp scale to avoid clipping (contain fit)
+let finalScale = position?.scale ?? 1;
+try {
+  const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
+  finalScale = clampContainScale({
+    Aw: ph?.width, Ah: ph?.height,
+    Iw: uploaded?.width, Ih: uploaded?.height,
+    requested: finalScale
+  });
+  console.log('🧮 Scale containment', {
+    Aw: ph?.width, Ah: ph?.height,
+    Iw: uploaded?.width, Ih: uploaded?.height,
+    requested: position?.scale ?? 1,
+    finalScale
+  });
+} catch (e) {
+  console.warn('⚠️ Contain-scale calc failed:', e.message);
+}
+
+  
   const payload = {
     external_id: `order-${Date.now()}`,
     label: 'Crossword Custom Order',
@@ -200,10 +236,10 @@ export async function createOrder({
         print_areas: {
           front: [
             {
-              src: uploaded.file_url || uploaded.source || uploaded.preview_url,
+              src: (uploaded.file_url || uploaded.preview_url),
               x: position.x,
               y: position.y,
-              scale: position.scale,
+              scale: finalScale,
               angle: position.angle,
             }
           ]
@@ -240,7 +276,7 @@ export async function createOrder({
   }
 }
 
-export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
+export async function applyImageToProduct(productId, variantId, uploadedImageId, placement, imageMeta) {
   // 1. Get current product config
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
