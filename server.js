@@ -151,7 +151,17 @@ async function handlePrintifyOrder(order) {
     }
 
     // We center the artwork; angle 0 for now. (Top/left handled in editor UI.)
-    const position = { x: 0.5, y: 0.5, scale, angle: 0 };
+    // Compute normalized center from editor offsets
+    const topPx  = parseFloat(item.design_specs?.top || '0');
+    const leftPx = parseFloat(item.design_specs?.left || '0');
+    let x = 0.5, y = 0.5;
+    if (area && Number.isFinite(area.width) && Number.isFinite(area.height)) {
+      const imgW = area.width  * scale;
+      const imgH = area.height * scale;
+      x = Math.min(1, Math.max(0, (leftPx + imgW / 2) / area.width));
+      y = Math.min(1, Math.max(0, (topPx  + imgH / 2) / area.height));
+    }
+    const position = { x, y, scale, angle: 0 };
 
     const recipient = {
       name: `${order.shipping_address?.first_name || ''} ${order.shipping_address?.last_name || ''}`.trim(),
