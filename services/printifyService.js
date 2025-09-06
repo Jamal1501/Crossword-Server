@@ -200,7 +200,7 @@ export async function createOrder({
         print_areas: {
           front: [
             {
-              src: uploaded.preview_url,
+              src: uploaded.file_url || uploaded.source || uploaded.preview_url,
               x: position.x,
               y: position.y,
               scale: position.scale,
