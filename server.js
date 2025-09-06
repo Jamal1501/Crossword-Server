@@ -538,14 +538,17 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
     // 2. Apply it to the chosen product + variant
     await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
 
-    // 3. Fetch the updated product (mockup should now exist)
-    const product = await fetchProduct(productId);
+   // 3. Poll for mockups (Printify needs a few seconds)
+let product;
+for (let attempt = 1; attempt <= 10; attempt++) {
+  product = await fetchProduct(productId);
+  const ready = Array.isArray(product?.images) && product.images.some(i => i?.src);
+  if (ready) break;
+  await new Promise(r => setTimeout(r, 1200)); // ~12s max
+}
 
-    res.json({
-      success: true,
-      uploadedImage: uploaded,
-      product,
-    });
+res.json({ success: true, uploadedImage: uploaded, product });
+
   } catch (err) {
     console.error("❌ Preview generation failed:", err.message);
     res.status(500).json({ error: err.message });
