@@ -444,6 +444,27 @@ app.get('/apps/crossword/products', async (req, res) => {
       const img = p.image?.src || p.images?.[0]?.src || '';
 
       const printifyProductId = printifyVariantId ? (pifyVariantToProduct.get(printifyVariantId) || null) : null;
+      // Fetch live placeholder for this Printify variant (front)
+      let liveArea = null;
+      if (printifyProductId && printifyVariantId) {
+        const prodMeta = pifyArray.find(pr => pr.id === printifyProductId);
+        if (prodMeta) {
+          const variantsRes = await safeFetch(
+            `https://api.printify.com/v1/catalog/blueprints/${prodMeta.blueprint_id}/print_providers/${prodMeta.print_provider_id}/variants.json`,
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+          const vMeta = variantsRes?.variants?.find(v => v.id === printifyVariantId);
+          const ph = vMeta?.placeholders?.find(ph => ph.position === 'front');
+          if (ph?.width && ph?.height) {
+            liveArea = { width: ph.width, height: ph.height, top: ph.top || 0, left: ph.left || 0 };
+          }
+        }
+      }
 
       out.push({
         // new fields for editor preview
@@ -458,7 +479,7 @@ app.get('/apps/crossword/products', async (req, res) => {
         printifyProductId: variantMap[String(preferred?.id)] || null, // legacy
         variantId: preferred?.id || null,
         price: parseFloat(preferred?.price) || 0,
-        printArea: printAreas[String(preferred?.id)] || DEFAULT_AREA
+        printArea: liveArea || printAreas[String(preferred?.id)] || DEFAULT_AREA
       });
     }
 
