@@ -303,11 +303,9 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     ]
   }));
 
-  // @LF-ANCHOR: restrict-to-variant
-const finalPrintAreas = updatedPrintAreas.map(a => ({
-  ...a,
-  variant_ids: Array.isArray(a.variant_ids) ? a.variant_ids.filter(id => id === variantId) : [variantId],
-}));
+// @LF-ANCHOR: restrict-to-variant
+const finalPrintAreas = updatedPrintAreas; // keep all variant_ids as-is
+
 
   const payload = {
     title: product.title,
