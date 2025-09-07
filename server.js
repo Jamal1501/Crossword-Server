@@ -443,7 +443,7 @@ app.get('/apps/crossword/products', async (req, res) => {
       const printifyVariantId = variantMap[shopifyId] || null;
       const img = p.image?.src || p.images?.[0]?.src || '';
 
-            // Build per-variant list for size selection
+      // Build per-variant list for size/color selection
       const variantList = (Array.isArray(p.variants) ? p.variants : [])
         .filter(v => mappedIds.has(String(v.id)))
         .map(v => ({
