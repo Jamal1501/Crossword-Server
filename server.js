@@ -443,6 +443,18 @@ app.get('/apps/crossword/products', async (req, res) => {
       const printifyVariantId = variantMap[shopifyId] || null;
       const img = p.image?.src || p.images?.[0]?.src || '';
 
+            // Build per-variant list for size selection
+      const variantList = (Array.isArray(p.variants) ? p.variants : [])
+        .filter(v => mappedIds.has(String(v.id)))
+        .map(v => ({
+          title: v.title || [v.option1, v.option2, v.option3].filter(Boolean).join(' / '),
+          shopifyVariantId: String(v.id),
+          printifyVariantId: variantMap[String(v.id)] || null,
+          price: parseFloat(v.price) || 0,
+          options: { option1: v.option1, option2: v.option2, option3: v.option3 },
+          printArea: printAreas[String(v.id)] || DEFAULT_AREA
+        }));
+
       const printifyProductId = printifyVariantId ? (pifyVariantToProduct.get(printifyVariantId) || null) : null;
       // Fetch live placeholder for this Printify variant (front)
       let liveArea = null;
@@ -468,15 +480,14 @@ app.get('/apps/crossword/products', async (req, res) => {
 
       out.push({
         // new fields for editor preview
-        id: printifyProductId,      // Printify product ID
+        id: p.Id,      // Printify product ID
         printifyVariantId,          // Printify variant ID
-
-        // keep all your old fields so nothing breaks
+        variants: variantList,
         title: p.title,
         handle: p.handle || '',
         image: img || '',
         shopifyVariantId: String(preferred?.id || ''),
-        printifyProductId: variantMap[String(preferred?.id)] || null, // legacy
+        printifyProductId,
         variantId: preferred?.id || null,
         price: parseFloat(preferred?.price) || 0,
         printArea: liveArea || printAreas[String(preferred?.id)] || DEFAULT_AREA
