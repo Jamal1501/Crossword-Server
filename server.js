@@ -480,7 +480,7 @@ app.get('/apps/crossword/products', async (req, res) => {
 
       out.push({
         // new fields for editor preview
-        id: p.Id,      // Printify product ID
+        id: p.id,      // Printify product ID
         printifyVariantId,          // Printify variant ID
         variants: variantList,
         title: p.title,
