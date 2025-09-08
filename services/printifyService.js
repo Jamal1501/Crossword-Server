@@ -325,7 +325,7 @@ const finalPrintAreas = updatedPrintAreas; // keep all variant_ids as-is
   });
 }
 
-// [ADD] Apply front + back images in one PUT
+// [ADD] Apply front + back images to a product
 export async function applyImagesToProductDual(productId, variantId, frontImageId, backImageId, placement) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
@@ -350,10 +350,7 @@ export async function applyImagesToProductDual(productId, variantId, frontImageI
         position: "back",
         images: [{
           id: backImageId,
-          x: 0.5,
-          y: 0.5,
-          scale: 1,
-          angle: 0
+          x: 0.5, y: 0.5, scale: 1, angle: 0
         }]
       }
     ]
@@ -375,6 +372,7 @@ export async function applyImagesToProductDual(productId, variantId, frontImageI
     body: JSON.stringify(payload)
   });
 }
+
 
 
 export async function fetchProduct(productId) {
