@@ -501,7 +501,7 @@ app.get('/apps/crossword/products', async (req, res) => {
   }
 });
 
-import { uploadImageFromUrl, applyImageToProduct, fetchProduct } from './services/printifyService.js';
+import { uploadImageFromUrl, applyImageToProduct, applyImagesToProductDual, fetchProduct } from './services/printifyService.js';
 
 app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
   try {
@@ -531,6 +531,7 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
   try {
     const { imageUrl, productId, variantId } = req.query;
 
+    const backImageUrl = req.query.backImageUrl; // [ADD]
         const position = {
       x: req.query.x ? parseFloat(req.query.x) : 0.5,
       y: req.query.y ? parseFloat(req.query.y) : 0.5,
@@ -545,9 +546,16 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
 
     // 1. Upload the crossword image
     const uploaded = await uploadImageFromUrl(imageUrl);
+  let uploadedBack = null; // [ADD]
+if (backImageUrl) {
+  uploadedBack = await uploadImageFromUrl(backImageUrl);
+}
 
-    // 2. Apply it to the chosen product + variant
-    await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
+if (uploadedBack?.id) {
+  await applyImagesToProductDual(productId, parseInt(variantId), uploaded.id, uploadedBack.id, position);
+} else {
+  await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
+}
 
    // 3. Poll for mockups (Printify needs a few seconds)
 let product;
