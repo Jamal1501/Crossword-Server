@@ -325,6 +325,57 @@ const finalPrintAreas = updatedPrintAreas; // keep all variant_ids as-is
   });
 }
 
+// [ADD] Apply front + back images in one PUT
+export async function applyImagesToProductDual(productId, variantId, frontImageId, backImageId, placement) {
+  const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
+  const product = await safeFetch(url, { headers: authHeaders() });
+
+  const allVariantIds = product.variants.map(v => v.id);
+
+  const updatedPrintAreas = product.print_areas.map(area => ({
+    ...area,
+    variant_ids: allVariantIds,
+    placeholders: [
+      {
+        position: "front",
+        images: [{
+          id: frontImageId,
+          x: placement?.x ?? 0.5,
+          y: placement?.y ?? 0.5,
+          scale: placement?.scale ?? 1,
+          angle: placement?.angle ?? 0
+        }]
+      },
+      {
+        position: "back",
+        images: [{
+          id: backImageId,
+          x: 0.5,
+          y: 0.5,
+          scale: 1,
+          angle: 0
+        }]
+      }
+    ]
+  }));
+
+  const payload = {
+    title: product.title,
+    description: product.description,
+    blueprint_id: product.blueprint_id,
+    print_provider_id: product.print_provider_id,
+    variants: product.variants,
+    print_areas: updatedPrintAreas
+  };
+
+  const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
+  return safeFetch(updateUrl, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+}
+
 
 export async function fetchProduct(productId) {
   if (!productId) {
