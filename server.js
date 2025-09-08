@@ -505,7 +505,7 @@ import { uploadImageFromUrl, applyImageToProduct, applyImagesToProductDual, fetc
 
 app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
   try {
-    const { imageUrl, productId, variantId } = req.query;
+    const { imageUrl, productId, variantId, backImageUrl } = req.query; // [ADD backImageUrl]
 
     // 1. Upload crossword image to Printify
     const uploadedImage = await uploadImageFromUrl(imageUrl);
