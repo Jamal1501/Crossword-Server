@@ -105,6 +105,7 @@ const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 const PDF_TOKEN_SECRET = process.env.PDF_TOKEN_SECRET || 'dev_change_me';
 const SHOPIFY_APP_PROXY_SECRET = process.env.SHOPIFY_APP_PROXY_SECRET || '';
 const PaidPuzzles = new Map(); // puzzleId -> { orderId, email, crosswordImage, cluesImage, when }
+
 function issuePdfToken(puzzleId, orderId) {
   return crypto.createHmac('sha256', PDF_TOKEN_SECRET)
     .update(`${puzzleId}|${orderId}`)
@@ -115,23 +116,16 @@ function verifyPdfToken(puzzleId, orderId, token) {
   return token && token === issuePdfToken(puzzleId, orderId);
 }
 
-// Shopify App Proxy signature check (rejects non-proxy calls)
+// Verify Shopify App Proxy signature on /apps/crossword/* endpoints
 function verifyAppProxy(req) {
-  if (!SHOPIFY_APP_PROXY_SECRET) return false;
   const sig = req.query.signature;
-  if (!sig) return false;
-
-  // Build canonical query w/o 'signature'
+  if (!sig || !SHOPIFY_APP_PROXY_SECRET) return false;
   const qp = { ...req.query };
   delete qp.signature;
   const query = Object.keys(qp).sort().map(k => `${k}=${qp[k]}`).join('&');
-  const pathOnly = req.originalUrl.split('?')[0]; // e.g. /apps/crossword/issue-pdf-token
-
+  const pathOnly = req.originalUrl.split('?')[0];
   const message = query ? `${pathOnly}?${query}` : pathOnly;
-  const digest = crypto.createHmac('sha256', SHOPIFY_APP_PROXY_SECRET)
-    .update(message)
-    .digest('hex');
-
+  const digest = crypto.createHmac('sha256', SHOPIFY_APP_PROXY_SECRET).update(message).digest('hex');
   return digest === sig;
 }
 
@@ -281,6 +275,40 @@ app.post('/webhooks/orders/create', async (req, res) => {
     return res.status(200).send('ok (duplicate ignored)');
   }
   processedShopifyOrders.add(order.id);
+    // [ADD] Record paid puzzleIds and their assets for PDF
+  try {
+    const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+    const seen = [];
+
+    for (const li of lineItems) {
+      const props = Array.isArray(li.properties) ? li.properties : [];
+      const getProp = (name) => {
+        const p = props.find(x => x && x.name === name);
+        return p ? String(p.value || '') : '';
+      };
+
+      const pid = getProp('_puzzle_id');
+      if (!pid) continue;
+
+      const crosswordImage = getProp('_custom_image');      // from addToCart
+      const cluesImage     = getProp('_clues_image_url');   // we added in A.3
+
+      PaidPuzzles.set(pid, {
+        orderId: String(order.id),
+        email: (order.email || order?.customer?.email || '') + '',
+        crosswordImage,
+        cluesImage,
+        when: new Date().toISOString(),
+      });
+      seen.push(pid);
+    }
+
+    if (seen.length) {
+      console.log('🔐 Stored paid puzzleIds:', seen);
+    }
+  } catch (e) {
+    console.error('❌ Failed to index paid puzzleIds', e);
+  }
 
   await handlePrintifyOrder(order);
   res.status(200).send('Webhook received');
@@ -985,21 +1013,22 @@ app.get("/apps/crossword/all-print-areas", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch all product print areas" });
   }
 });
-// [ADD] After purchase, the order status page calls this once to stash a token in localStorage
-app.get('/apps/crossword/issue-pdf-token', (req, res) => {
+
+// Claim a one-time token if this puzzleId was purchased (per webhook record)
+app.get('/apps/crossword/claim-pdf', (req, res) => {
   if (!verifyAppProxy(req)) return res.status(401).json({ ok: false, error: 'Bad signature' });
 
   const { puzzleId } = req.query;
   if (!puzzleId) return res.status(400).json({ ok: false, error: 'Missing puzzleId' });
 
   const info = PaidPuzzles.get(String(puzzleId));
-  if (!info) return res.status(404).json({ ok: false, error: 'Purchase not found yet' });
+  if (!info) return res.status(403).json({ ok: false, error: 'Not purchased' });
 
   const token = issuePdfToken(String(puzzleId), String(info.orderId));
   res.json({ ok: true, token });
 });
 
-// [ADD] Streams a 2-page A4 PDF (puzzle on page 1, clues on page 2)
+// Streams a 2-page A4 PDF (page 1: crossword, page 2: clues if available)
 app.get('/apps/crossword/download-pdf', async (req, res) => {
   if (!verifyAppProxy(req)) return res.status(401).send('Bad signature');
 
@@ -1014,7 +1043,7 @@ app.get('/apps/crossword/download-pdf', async (req, res) => {
   }
 
   try {
-    const a4w = 595.28, a4h = 841.89; // points (A4 portrait @72dpi)
+    const a4w = 595.28, a4h = 841.89; // points (A4 @72dpi)
     const margin = 36; // 0.5 inch
     const maxW = a4w - margin * 2;
     const maxH = a4h - margin * 2;
@@ -1037,7 +1066,8 @@ app.get('/apps/crossword/download-pdf', async (req, res) => {
 
     const addImagePage = async (buf) => {
       if (!buf) return;
-      const isPng = buf[0] === 0x89 && buf[1] === 0x50; // crude but fine
+      // detect png vs jpg crudely
+      const isPng = buf[0] === 0x89 && buf[1] === 0x50;
       const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
       const { width, height } = img.size();
 
