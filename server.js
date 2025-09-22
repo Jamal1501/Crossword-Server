@@ -1014,6 +1014,147 @@ app.get("/apps/crossword/all-print-areas", async (req, res) => {
   }
 });
 
+// Direct purchase registration and PDF download (no App Proxy)
+app.post('/register-purchase-and-download', async (req, res) => {
+  try {
+    const { puzzleId, orderId, crosswordImage, cluesImage } = req.body;
+    
+    console.log('Direct PDF request:', { puzzleId, orderId, hasImage: !!crosswordImage });
+    
+    if (!puzzleId || !orderId || !crosswordImage) {
+      return res.status(400).json({ error: 'Missing required data' });
+    }
+    
+    // Register the purchase (same as webhook would do)
+    const purchaseRecord = {
+      orderId: String(orderId),
+      puzzleId: puzzleId,
+      crosswordImage: crosswordImage,
+      cluesImage: cluesImage || '',
+      purchasedAt: new Date().toISOString(),
+      method: 'direct'
+    };
+    
+    PaidPuzzles.set(puzzleId, purchaseRecord);
+    console.log(`Registered direct purchase: ${puzzleId}`);
+    
+    // Generate PDF immediately
+    const a4w = 595.28, a4h = 841.89;
+    const margin = 36;
+    const maxW = a4w - margin * 2;
+    const maxH = a4h - margin * 2;
+    
+    const fetchBuf = async (url) => {
+      if (!url) return null;
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`Image fetch failed: ${r.status}`);
+      return Buffer.from(await r.arrayBuffer());
+    };
+    
+    const [puzzleBuf, cluesBuf] = await Promise.all([
+      fetchBuf(crosswordImage),
+      cluesImage ? fetchBuf(cluesImage) : Promise.resolve(null)
+    ]);
+    
+    if (!puzzleBuf) {
+      return res.status(422).json({ error: 'Could not fetch crossword image' });
+    }
+    
+    const pdf = await PDFDocument.create();
+    
+    const addImagePage = async (buf) => {
+      if (!buf) return;
+      const isPng = buf[0] === 0x89 && buf[1] === 0x50;
+      const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
+      const { width, height } = img.size();
+      
+      const scale = Math.min(maxW / width, maxH / height, 1);
+      const w = width * scale, h = height * scale;
+      const x = (a4w - w) / 2, y = (a4h - h) / 2;
+      
+      const page = pdf.addPage([a4w, a4h]);
+      page.drawImage(img, { x, y, width: w, height: h });
+    };
+    
+    await addImagePage(puzzleBuf);
+    await addImagePage(cluesBuf);
+    
+    const pdfBytes = await pdf.save();
+    
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="crossword-${puzzleId.slice(0,8)}.pdf"`);
+    return res.send(Buffer.from(pdfBytes));
+    
+  } catch (error) {
+    console.error('Direct PDF generation failed:', error);
+    return res.status(500).json({ error: 'PDF generation failed' });
+  }
+});
+
+// Keep the preview endpoint working with direct calls
+app.get('/preview-pdf', async (req, res) => {
+  try {
+    const imageUrl = String(req.query.imageUrl || '');
+    const cluesUrl = String(req.query.cluesUrl || '');
+    
+    if (!imageUrl) return res.status(400).send('Missing imageUrl');
+    
+    const a4w = 595.28, a4h = 841.89;
+    const margin = 36;
+    const maxW = a4w - margin * 2;
+    const maxH = a4h - margin * 2;
+    
+    const fetchBuf = async (url) => {
+      if (!url) return null;
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('Image fetch failed ' + r.status);
+      return Buffer.from(await r.arrayBuffer());
+    };
+    
+    const [puzzleBuf, cluesBuf] = await Promise.all([
+      fetchBuf(imageUrl),
+      cluesUrl ? fetchBuf(cluesUrl) : Promise.resolve(null)
+    ]);
+    
+    const pdf = await PDFDocument.create();
+    
+    const addImagePage = async (buf, withWatermark = true) => {
+      const page = pdf.addPage([a4w, a4h]);
+      if (buf) {
+        const isPng = buf[0] === 0x89 && buf[1] === 0x50;
+        const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
+        const { width, height } = img.size();
+        const scale = Math.min(maxW / width, maxH / height, 1);
+        const w = width * scale, h = height * scale;
+        const x = (a4w - w) / 2, y = (a4h - h) / 2;
+        page.drawImage(img, { x, y, width: w, height: h });
+      }
+      if (withWatermark) {
+        page.drawText('PREVIEW', {
+          x: a4w * 0.18,
+          y: a4h * 0.45,
+          size: 64,
+          color: { r: 0.8, g: 0.1, b: 0.1 },
+          rotate: { type: 'degrees', angle: 35 },
+          opacity: 0.25
+        });
+      }
+    };
+    
+    await addImagePage(puzzleBuf, true);
+    await addImagePage(cluesBuf, true);
+    
+    const pdfBytes = await pdf.save();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="crossword-preview.pdf"');
+    return res.send(Buffer.from(pdfBytes));
+    
+  } catch (err) {
+    console.error('Preview PDF failed:', err);
+    return res.status(500).send('Preview failed');
+  }
+});
+
 // [ADD] Preview PDF with watermark (no purchase required, but signed via App Proxy)
 app.get('/apps/crossword/preview-pdf', async (req, res) => {
   if (!verifyAppProxy(req)) return res.status(401).send('Bad signature');
