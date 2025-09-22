@@ -1095,6 +1095,83 @@ app.get('/apps/crossword/claim-pdf', (req, res) => {
   res.json({ ok: true, token });
 });
 
+// --- helper: preview-pdf shared handler (so we can mount it at 2 paths) ---
+async function handlePreviewPdf(req, res) {
+  // NOTE: we require app-proxy signature on both mounts
+  if (!verifyAppProxy(req)) return res.status(401).send('Bad signature');
+
+  try {
+    const imageUrl = String(req.query.imageUrl || '');
+    const cluesUrl = String(req.query.cluesUrl || '');
+    if (!imageUrl) return res.status(400).send('Missing imageUrl');
+
+    const a4w = 595.28, a4h = 841.89; // A4 @72dpi
+    const margin = 36;
+    const maxW = a4w - margin * 2;
+    const maxH = a4h - margin * 2;
+
+    const fetchBuf = async (url) => {
+      if (!url) return null;
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('Image fetch failed ' + r.status);
+      return Buffer.from(await r.arrayBuffer());
+    };
+
+    const [puzzleBuf, cluesBuf] = await Promise.all([
+      fetchBuf(imageUrl),
+      cluesUrl ? fetchBuf(cluesUrl) : Promise.resolve(null)
+    ]);
+
+    const pdf = await PDFDocument.create();
+
+    const addImagePage = async (buf, withWatermark = true) => {
+      const page = pdf.addPage([a4w, a4h]);
+      if (buf) {
+        const isPng = buf[0] === 0x89 && buf[1] === 0x50;
+        const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
+        const { width, height } = img.size();
+        const scale = Math.min(maxW / width, maxH / height, 1);
+        const w = width * scale, h = height * scale;
+        const x = (a4w - w) / 2, y = (a4h - h) / 2;
+        page.drawImage(img, { x, y, width: w, height: h });
+      }
+      // subtle watermark for preview
+      page.drawText('PREVIEW', {
+        x: a4w * 0.18,
+        y: a4h * 0.45,
+        size: 64,
+        color: { r: 0.8, g: 0.1, b: 0.1 },
+        rotate: { type: 'degrees', angle: 35 },
+        opacity: 0.25
+      });
+    };
+
+    await addImagePage(puzzleBuf, true);
+    await addImagePage(cluesBuf, true);
+
+    const pdfBytes = await pdf.save();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="loveframes-crossword-preview.pdf"');
+    return res.send(Buffer.from(pdfBytes));
+  } catch (err) {
+    console.error('❌ Preview PDF failed:', err);
+    return res.status(500).send('Preview failed');
+  }
+}
+
+// If your Proxy URL includes "/apps/crossword" in the target, this will match:
+app.get('/apps/crossword/preview-pdf', (req, res) => { handlePreviewPdf(req, res); });
+
+// If your Proxy URL points at the server root (Shopify strips "/apps/crossword"),
+// this version will match:
+app.get('/preview-pdf', (req, res) => { handlePreviewPdf(req, res); });
+app.get('/apps/crossword/__echo', (req, res) => {
+  res.json({ ok: true, path: req.path, query: req.query });
+});
+app.get('/__echo', (req, res) => {
+  res.json({ ok: true, path: req.path, query: req.query });
+});
+
 // Streams a 2-page A4 PDF (page 1: crossword, page 2: clues if available)
 app.get('/apps/crossword/download-pdf', async (req, res) => {
   if (!verifyAppProxy(req)) return res.status(401).send('Bad signature');
