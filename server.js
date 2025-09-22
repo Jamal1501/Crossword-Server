@@ -1014,6 +1014,8 @@ app.get("/apps/crossword/all-print-areas", async (req, res) => {
   }
 });
 
+// Clean server code without App Proxy dependencies
+
 // Direct purchase registration and PDF download (no App Proxy)
 app.post('/register-purchase-and-download', async (req, res) => {
   try {
@@ -1091,7 +1093,7 @@ app.post('/register-purchase-and-download', async (req, res) => {
   }
 });
 
-// Keep the preview endpoint working with direct calls
+// Preview PDF with watermark (no authentication required)
 app.get('/preview-pdf', async (req, res) => {
   try {
     const imageUrl = String(req.query.imageUrl || '');
@@ -1155,228 +1157,18 @@ app.get('/preview-pdf', async (req, res) => {
   }
 });
 
-// [ADD] Preview PDF with watermark (no purchase required, but signed via App Proxy)
-app.get('/apps/crossword/preview-pdf', async (req, res) => {
-  if (!verifyAppProxy(req)) return res.status(401).send('Bad signature');
-
-  try {
-    // Accept explicit URLs OR fall back to the last saved (not recommended; we expect explicit)
-    const imageUrl = String(req.query.imageUrl || '');
-    const cluesUrl = String(req.query.cluesUrl || '');
-
-    if (!imageUrl) return res.status(400).send('Missing imageUrl');
-
-    const a4w = 595.28, a4h = 841.89; // A4 @72dpi
-    const margin = 36;
-    const maxW = a4w - margin * 2;
-    const maxH = a4h - margin * 2;
-
-    const fetchBuf = async (url) => {
-      if (!url) return null;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error('Image fetch failed ' + r.status);
-      return Buffer.from(await r.arrayBuffer());
-    };
-
-    const [puzzleBuf, cluesBuf] = await Promise.all([
-      fetchBuf(imageUrl),
-      cluesUrl ? fetchBuf(cluesUrl) : Promise.resolve(null)
-    ]);
-
-    const pdf = await PDFDocument.create();
-
-    const addImagePage = async (buf, withWatermark = true) => {
-      const page = pdf.addPage([a4w, a4h]);
-      if (buf) {
-        const isPng = buf[0] === 0x89 && buf[1] === 0x50;
-        const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
-        const { width, height } = img.size();
-        const scale = Math.min(maxW / width, maxH / height, 1);
-        const w = width * scale, h = height * scale;
-        const x = (a4w - w) / 2, y = (a4h - h) / 2;
-        page.drawImage(img, { x, y, width: w, height: h });
-      }
-      if (withWatermark) {
-        const fontSize = 64;
-        page.drawText('PREVIEW', {
-          x: a4w * 0.18,
-          y: a4h * 0.45,
-          size: fontSize,
-          color: { r: 0.8, g: 0.1, b: 0.1 },
-          rotate: { type: 'degrees', angle: 35 },
-          opacity: 0.25
-        });
-      }
-    };
-
-    await addImagePage(puzzleBuf, true);
-    await addImagePage(cluesBuf, true);
-
-    const pdfBytes = await pdf.save();
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="loveframes-crossword-preview.pdf"');
-    return res.send(Buffer.from(pdfBytes));
-  } catch (err) {
-    console.error('❌ Preview PDF failed:', err);
-    return res.status(500).send('Preview failed');
-  }
-});
-
-// Claim a one-time token if this puzzleId was purchased (per webhook record)
-app.get('/apps/crossword/claim-pdf', (req, res) => {
-  if (!verifyAppProxy(req)) return res.status(401).json({ ok: false, error: 'Bad signature' });
-
-  const { puzzleId } = req.query;
-  if (!puzzleId) return res.status(400).json({ ok: false, error: 'Missing puzzleId' });
-
-  const info = PaidPuzzles.get(String(puzzleId));
-  if (!info) return res.status(403).json({ ok: false, error: 'Not purchased' });
-
-  const token = issuePdfToken(String(puzzleId), String(info.orderId));
-  res.json({ ok: true, token });
-});
-
-// --- helper: preview-pdf shared handler (so we can mount it at 2 paths) ---
-async function handlePreviewPdf(req, res) {
-  // NOTE: we require app-proxy signature on both mounts
-  if (!verifyAppProxy(req)) return res.status(401).send('Bad signature');
-
-  try {
-    const imageUrl = String(req.query.imageUrl || '');
-    const cluesUrl = String(req.query.cluesUrl || '');
-    if (!imageUrl) return res.status(400).send('Missing imageUrl');
-
-    const a4w = 595.28, a4h = 841.89; // A4 @72dpi
-    const margin = 36;
-    const maxW = a4w - margin * 2;
-    const maxH = a4h - margin * 2;
-
-    const fetchBuf = async (url) => {
-      if (!url) return null;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error('Image fetch failed ' + r.status);
-      return Buffer.from(await r.arrayBuffer());
-    };
-
-    const [puzzleBuf, cluesBuf] = await Promise.all([
-      fetchBuf(imageUrl),
-      cluesUrl ? fetchBuf(cluesUrl) : Promise.resolve(null)
-    ]);
-
-    const pdf = await PDFDocument.create();
-
-    const addImagePage = async (buf, withWatermark = true) => {
-      const page = pdf.addPage([a4w, a4h]);
-      if (buf) {
-        const isPng = buf[0] === 0x89 && buf[1] === 0x50;
-        const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
-        const { width, height } = img.size();
-        const scale = Math.min(maxW / width, maxH / height, 1);
-        const w = width * scale, h = height * scale;
-        const x = (a4w - w) / 2, y = (a4h - h) / 2;
-        page.drawImage(img, { x, y, width: w, height: h });
-      }
-      // subtle watermark for preview
-      page.drawText('PREVIEW', {
-        x: a4w * 0.18,
-        y: a4h * 0.45,
-        size: 64,
-        color: { r: 0.8, g: 0.1, b: 0.1 },
-        rotate: { type: 'degrees', angle: 35 },
-        opacity: 0.25
-      });
-    };
-
-    await addImagePage(puzzleBuf, true);
-    await addImagePage(cluesBuf, true);
-
-    const pdfBytes = await pdf.save();
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="loveframes-crossword-preview.pdf"');
-    return res.send(Buffer.from(pdfBytes));
-  } catch (err) {
-    console.error('❌ Preview PDF failed:', err);
-    return res.status(500).send('Preview failed');
-  }
-}
-
-// If your Proxy URL includes "/apps/crossword" in the target, this will match:
-app.get('/apps/crossword/preview-pdf', (req, res) => { handlePreviewPdf(req, res); });
-
-// If your Proxy URL points at the server root (Shopify strips "/apps/crossword"),
-// this version will match:
-app.get('/preview-pdf', (req, res) => { handlePreviewPdf(req, res); });
-app.get('/apps/crossword/__echo', (req, res) => {
-  res.json({ ok: true, path: req.path, query: req.query });
-});
+// Debug endpoint
 app.get('/__echo', (req, res) => {
   res.json({ ok: true, path: req.path, query: req.query });
 });
 
-// Streams a 2-page A4 PDF (page 1: crossword, page 2: clues if available)
-app.get('/apps/crossword/download-pdf', async (req, res) => {
-  if (!verifyAppProxy(req)) return res.status(401).send('Bad signature');
-
-  const { puzzleId, token } = req.query;
-  if (!puzzleId || !token) return res.status(400).send('Missing puzzleId or token');
-
-  const info = PaidPuzzles.get(String(puzzleId));
-  if (!info) return res.status(403).send('Not purchased');
-
-  if (!verifyPdfToken(String(puzzleId), String(info.orderId), String(token))) {
-    return res.status(401).send('Invalid token');
-  }
-
-  try {
-    const a4w = 595.28, a4h = 841.89; // points (A4 @72dpi)
-    const margin = 36; // 0.5 inch
-    const maxW = a4w - margin * 2;
-    const maxH = a4h - margin * 2;
-
-    const fetchBuf = async (url) => {
-      if (!url) return null;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error('Image fetch failed ' + r.status);
-      return Buffer.from(await r.arrayBuffer());
-    };
-
-    const [puzzleBuf, cluesBuf] = await Promise.all([
-      fetchBuf(info.crosswordImage),
-      fetchBuf(info.cluesImage)
-    ]);
-
-    if (!puzzleBuf) return res.status(422).send('Missing crossword image on order');
-
-    const pdf = await PDFDocument.create();
-
-    const addImagePage = async (buf) => {
-      if (!buf) return;
-      // detect png vs jpg crudely
-      const isPng = buf[0] === 0x89 && buf[1] === 0x50;
-      const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
-      const { width, height } = img.size();
-
-      const scale = Math.min(maxW / width, maxH / height, 1);
-      const w = width * scale, h = height * scale;
-      const x = (a4w - w) / 2, y = (a4h - h) / 2;
-
-      const page = pdf.addPage([a4w, a4h]);
-      page.drawImage(img, { x, y, width: w, height: h });
-    };
-
-    await addImagePage(puzzleBuf);
-    await addImagePage(cluesBuf);
-
-    const pdfBytes = await pdf.save();
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'attachment; filename="loveframes-crossword.pdf"');
-    return res.send(Buffer.from(pdfBytes));
-  } catch (err) {
-    console.error('❌ PDF generation failed:', err);
-    return res.status(500).send('PDF generation failed');
-  }
+// Debug endpoint to check registered purchases
+app.get('/debug/paid-puzzles', (req, res) => {
+  const puzzles = Array.from(PaidPuzzles.entries()).map(([id, data]) => ({
+    puzzleId: id,
+    ...data
+  }));
+  res.json({ count: puzzles.length, puzzles });
 });
-
-
 
 export default app;
