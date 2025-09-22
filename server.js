@@ -1136,7 +1136,7 @@ app.get('/preview-pdf', async (req, res) => {
           x: a4w * 0.18,
           y: a4h * 0.45,
           size: 64,
-          color: { r: 0.8, g: 0.1, b: 0.1 },
+          color: rgb(0.8, 0.1, 0.1),
           rotate: { type: 'degrees', angle: 35 },
           opacity: 0.25
         });
