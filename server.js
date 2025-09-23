@@ -1157,6 +1157,80 @@ app.get('/preview-pdf', async (req, res) => {
   }
 });
 
+// === PDF claim & download (App Proxy style) ===
+// GET /apps/crossword/claim-pdf?puzzleId=...
+app.get('/apps/crossword/claim-pdf', (req, res) => {
+  try {
+    const { puzzleId } = req.query;
+    if (!puzzleId) return res.status(400).json({ ok: false, error: 'Missing puzzleId' });
+
+    const rec = PaidPuzzles.get(puzzleId);
+    if (!rec) return res.status(404).json({ ok: false, error: 'No purchase found for this puzzleId' });
+
+    const token = issuePdfToken(puzzleId, rec.orderId);
+    return res.json({ ok: true, token });
+  } catch (e) {
+    console.error('claim-pdf failed:', e);
+    return res.status(500).json({ ok: false, error: 'Internal error' });
+  }
+});
+
+// GET /apps/crossword/download-pdf?puzzleId=...&token=...
+app.get('/apps/crossword/download-pdf', async (req, res) => {
+  try {
+    const { puzzleId, token } = req.query;
+    if (!puzzleId || !token) return res.status(400).json({ error: 'Missing puzzleId or token' });
+
+    const rec = PaidPuzzles.get(puzzleId);
+    if (!rec) return res.status(404).json({ error: 'No purchase found' });
+
+    if (!verifyPdfToken(puzzleId, rec.orderId, token)) {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+
+    // Generate same PDF as /register-purchase-and-download
+    const a4w = 595.28, a4h = 841.89;
+    const margin = 36;
+    const maxW = a4w - margin * 2;
+    const maxH = a4h - margin * 2;
+
+    const fetchBuf = async (url) => {
+      if (!url) return null;
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`Image fetch failed: ${r.status}`);
+      return Buffer.from(await r.arrayBuffer());
+    };
+
+    const pdf = await PDFDocument.create();
+
+    const addImagePage = async (buf) => {
+      if (!buf) return;
+      const isPng = buf[0] === 0x89 && buf[1] === 0x50;
+      const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
+      const { width, height } = img.size();
+      const scale = Math.min(maxW / width, maxH / height, 1);
+      const w = width * scale, h = height * scale;
+      const x = (a4w - w) / 2, y = (a4h - h) / 2;
+      const page = pdf.addPage([a4w, a4h]);
+      page.drawImage(img, { x, y, width: w, height: h });
+    };
+
+    const puzzleBuf = await fetchBuf(rec.crosswordImage);
+    const cluesBuf  = await fetchBuf(rec.cluesImage);
+
+    await addImagePage(puzzleBuf);
+    await addImagePage(cluesBuf);
+
+    const pdfBytes = await pdf.save();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="crossword-${String(puzzleId).slice(0,8)}.pdf"`);
+    return res.send(Buffer.from(pdfBytes));
+  } catch (err) {
+    console.error('download-pdf failed:', err);
+    return res.status(500).json({ error: 'PDF generation failed' });
+  }
+});
+
 // Debug endpoint
 app.get('/__echo', (req, res) => {
   res.json({ ok: true, path: req.path, query: req.query });
