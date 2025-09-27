@@ -40,7 +40,6 @@ function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
   return Math.min(requested ?? 1, maxScale);
 }
 
-
 export async function uploadImageFromUrl(imageUrl) {
   if (!imageUrl || typeof imageUrl !== 'string') {
     throw new Error('Invalid imageUrl input');
@@ -142,25 +141,52 @@ export async function createTestProduct({ shopifyTitle, shopifyHandle }) {
   return response;
 }
 
-export async function createOrder({ imageUrl, base64Image, variantId, quantity = 1, position, recipient, printArea, meta }) {
-
+/**
+ * Create a Printify order with a front image and (optionally) a back clues image.
+ */
+export async function createOrder({
+  imageUrl,
+  backImageUrl,                 // 👈 NEW: clues image for BACK
+  base64Image,
+  variantId,
+  quantity = 1,
+  position,
+  recipient,
+  printArea,
+  meta
+}) {
   if ((!imageUrl && !base64Image) || !variantId || !recipient) {
     console.error('❌ Missing required fields:', { imageUrl, base64Image, variantId, recipient });
     throw new Error('Missing required fields: imageUrl/base64Image, variantId, recipient');
   }
 
-  console.log('📤 Uploading image to Printify:', imageUrl || '[base64Image]');
-  let uploaded;
+  // 1) Upload FRONT image
+  console.log('📤 Uploading FRONT image to Printify:', imageUrl || '[base64Image]');
+  let uploadedFront;
   try {
-    uploaded = imageUrl
+    uploadedFront = imageUrl
       ? await uploadImageFromUrl(imageUrl)
       : await uploadImageFromBase64(base64Image);
-    console.log('✅ Image uploaded to Printify:', uploaded);
+    console.log('✅ Front image uploaded to Printify:', uploadedFront);
   } catch (uploadErr) {
-    console.error('❌ Failed to upload image to Printify:', uploadErr.message);
+    console.error('❌ Failed to upload front image to Printify:', uploadErr.message);
     throw uploadErr;
   }
 
+  // 2) Upload BACK image (optional)
+  let uploadedBack = null;
+  if (backImageUrl) {
+    try {
+      console.log('📤 Uploading BACK image to Printify:', backImageUrl);
+      uploadedBack = await uploadImageFromUrl(backImageUrl);
+      console.log('✅ Back image uploaded to Printify:', uploadedBack);
+    } catch (e) {
+      console.warn('⚠️ Back image upload failed; continuing without back:', e.message);
+      uploadedBack = null;
+    }
+  }
+
+  // 3) Resolve product/provider/blueprint for this variant
   console.log('🔍 Fetching all Printify products...');
   let products;
   try {
@@ -199,26 +225,55 @@ export async function createOrder({ imageUrl, base64Image, variantId, quantity =
     throw new Error(`Unable to resolve print_provider_id or blueprint_id for variant ${variantId}`);
   }
 
-// clamp scale to avoid clipping (contain fit)
-let finalScale = position?.scale ?? 1;
-try {
-  const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
-  finalScale = clampContainScale({
-    Aw: ph?.width, Ah: ph?.height,
-    Iw: uploaded?.width, Ih: uploaded?.height,
-    requested: finalScale
-  });
-  console.log('🧮 Scale containment', {
-    Aw: ph?.width, Ah: ph?.height,
-    Iw: uploaded?.width, Ih: uploaded?.height,
-    requested: position?.scale ?? 1,
-    finalScale
-  });
-} catch (e) {
-  console.warn('⚠️ Contain-scale calc failed:', e.message);
-}
+  // 4) Clamp scale for FRONT to avoid clipping (contain fit)
+  let finalScale = position?.scale ?? 1;
+  try {
+    const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
+    finalScale = clampContainScale({
+      Aw: ph?.width, Ah: ph?.height,
+      Iw: uploadedFront?.width, Ih: uploadedFront?.height,
+      requested: finalScale
+    });
+    console.log('🧮 Scale containment (front)', {
+      Aw: ph?.width, Ah: ph?.height,
+      Iw: uploadedFront?.width, Ih: uploadedFront?.height,
+      requested: position?.scale ?? 1,
+      finalScale
+    });
+  } catch (e) {
+    console.warn('⚠️ Contain-scale calc failed:', e.message);
+  }
 
-  
+  // 5) Build print_areas (front + optional back)
+  const frontSrc = uploadedFront.file_url || uploadedFront.preview_url;
+  const backSrc  = uploadedBack ? (uploadedBack.file_url || uploadedBack.preview_url) : null;
+
+  const print_areas = {
+    front: [
+      {
+        src: frontSrc,
+        x: Number(position?.x ?? 0.5),
+        y: Number(position?.y ?? 0.5),
+        scale: Number(finalScale),
+        angle: Number(position?.angle ?? 0),
+      }
+    ]
+  };
+
+  if (backSrc) {
+    // Center back clues; reuse front scale as a sane default
+    print_areas.back = [
+      {
+        src: backSrc,
+        x: 0.5,
+        y: 0.5,
+        scale: Number(finalScale),
+        angle: 0
+      }
+    ];
+  }
+
+  // 6) Final order payload
   const payload = {
     external_id: `order-${Date.now()}`,
     label: 'Crossword Custom Order',
@@ -228,25 +283,16 @@ try {
         quantity: Math.max(1, Number(quantity) || 1),
         print_provider_id: printProviderId,
         blueprint_id: blueprintId,
-        print_areas: {
-          front: [
-            {
-              src: (uploaded.file_url || uploaded.preview_url),
-              x: position.x,
-              y: position.y,
-              scale: finalScale,
-              angle: position.angle,
-            }
-          ]
-        }
+        print_areas
       }
     ],
     shipping_method: 1,
     send_shipping_notification: true,
     address_to: {
-      first_name: recipient.name.split(' ')[0],
-      last_name: recipient.name.split(' ').slice(1).join(' ') || '-',
+      first_name: (recipient.name || '').split(' ')[0] || '-',
+      last_name:  (recipient.name || '').split(' ').slice(1).join(' ') || '-',
       email: recipient.email,
+      phone: recipient.phone || '',
       address1: recipient.address1,
       city: recipient.city,
       country: recipient.country,
@@ -256,6 +302,7 @@ try {
 
   console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
 
+  // 7) Create the order
   try {
     const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
     const orderRes = await safeFetch(url, {
@@ -286,21 +333,20 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
       {
         position: "front",
         images: [
-        {
-  id: uploadedImageId,
-  x: placement?.x ?? 0.5,
-  y: placement?.y ?? 0.5,
-  scale: placement?.scale ?? 1,
-  angle: placement?.angle ?? 0
-}
+          {
+            id: uploadedImageId,
+            x: placement?.x ?? 0.5,
+            y: placement?.y ?? 0.5,
+            scale: placement?.scale ?? 1,
+            angle: placement?.angle ?? 0
+          }
         ]
       }
     ]
   }));
 
-// @LF-ANCHOR: restrict-to-variant
-const finalPrintAreas = updatedPrintAreas; // keep all variant_ids as-is
-
+  // @LF-ANCHOR: restrict-to-variant
+  const finalPrintAreas = updatedPrintAreas; // keep all variant_ids as-is
 
   const payload = {
     title: product.title,
@@ -320,7 +366,7 @@ const finalPrintAreas = updatedPrintAreas; // keep all variant_ids as-is
   });
 }
 
-// [ADD] Apply front + back images to a product
+// Apply front + back images to a product (used for previews)
 export async function applyImagesToProductDual(productId, variantId, frontImageId, backImageId, placement) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
@@ -368,15 +414,11 @@ export async function applyImagesToProductDual(productId, variantId, frontImageI
   });
 }
 
-
-
 export async function fetchProduct(productId) {
   if (!productId) {
     throw new Error("Missing productId");
   }
-
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
-
   return safeFetch(url, {
     method: 'GET',
     headers: authHeaders(),
