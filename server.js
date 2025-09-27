@@ -131,18 +131,20 @@ function verifyAppProxy(req) {
 
 async function handlePrintifyOrder(order) {
   // Flatten useful fields from Shopify line items
-  const items = order.line_items.map((item) => {
-    const custom_image = item.properties?.find(p => p.name === '_custom_image')?.value;
-    const design_specs_raw = item.properties?.find(p => p.name === '_design_specs')?.value;
-    const design_specs = design_specs_raw ? (() => { try { return JSON.parse(design_specs_raw); } catch { return null; } })() : null;
+ const items = order.line_items.map((item) => {
+  const custom_image = item.properties?.find(p => p.name === '_custom_image')?.value;
+  const design_specs_raw = item.properties?.find(p => p.name === '_design_specs')?.value;
+  const design_specs = design_specs_raw ? (() => { try { return JSON.parse(design_specs_raw); } catch { return null; } })() : null;
 
-    return {
-      title: item.title,
-      variant_id: item.variant_id,            // Shopify variant ID
-      custom_image,
-      design_specs
-    };
-  });
+  return {
+    title: item.title,
+    variant_id: item.variant_id,     // Shopify variant ID
+    quantity: item.quantity || 1,    // ← add this
+    custom_image,
+    design_specs
+  };
+});
+
 
   for (const item of items) {
     if (!item.custom_image || !item.variant_id) {
