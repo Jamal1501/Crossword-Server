@@ -203,15 +203,15 @@ async function handlePrintifyOrder(order) {
     };
 
     try {
-      const response = await createOrder({
-        imageUrl: item.custom_image,
-        variantId: printifyVariantId,
-        position,
-        recipient,
-        // pass through for service to use if supported
-        printArea: area || undefined,
-        meta: { shopifyVid, title: item.title }
-      });
+const response = await createOrder({
+  imageUrl: item.custom_image,
+  variantId: printifyVariantId,
+  quantity: item.quantity,          // ← pass it through
+  position,
+  recipient,
+  printArea: area || undefined,
+  meta: { shopifyVid, title: item.title }
+});
       console.log('✅ Printify order created:', response?.id || '[no id]', { shopifyVid, printifyVariantId, scale });
     } catch (err) {
       console.error('❌ Failed to create Printify order:', { shopifyVid, printifyVariantId, scale, err: err?.message || err });
@@ -387,7 +387,7 @@ const submittedOrders = new Set();  // memory-only cache
 
 app.post('/api/printify/order', async (req, res) => {
   try {
-    const { imageUrl, base64Image, variantId, position, recipient } = req.body;
+    const { imageUrl, base64Image, variantId, position, recipient, quantity } = req.body;
     const { orderId } = req.body;
     console.log('Received orderId:', orderId);
 
@@ -415,7 +415,7 @@ app.post('/api/printify/order', async (req, res) => {
       recipient: recipient.name
     });
 
-    const order = await createOrder({ imageUrl, base64Image, variantId, position, recipient });
+    const order = await createOrder({ imageUrl, base64Image, variantId, quantity, position, recipient });
     res.json({ success: true, order });
   } catch (err) {
     console.error('Order creation failed:', err);
@@ -447,7 +447,7 @@ app.post('/save-crossword', cors(corsOptions), async (req, res) => {
 
 app.post('/api/printify/order-from-url', async (req, res) => {
   try {
-    const { cloudinaryUrl, variantId, position, recipient } = req.body;
+    const { cloudinaryUrl, variantId, position, recipient, quantity } = req.body;
 
     if (!cloudinaryUrl || !variantId || !recipient) {
       return res.status(400).json({ error: 'Missing required fields: cloudinaryUrl, variantId, recipient', success: false });
@@ -455,7 +455,7 @@ app.post('/api/printify/order-from-url', async (req, res) => {
 
     console.log('Creating order directly from Cloudinary URL:', cloudinaryUrl);
 
-    const order = await createOrder({ imageUrl: cloudinaryUrl, variantId, position, recipient });
+   const order = await createOrder({ imageUrl: cloudinaryUrl, variantId, quantity, position, recipient });
     res.json({ success: true, order });
   } catch (err) {
     console.error('Order creation failed:', err);
