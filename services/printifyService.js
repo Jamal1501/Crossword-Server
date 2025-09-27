@@ -142,13 +142,8 @@ export async function createTestProduct({ shopifyTitle, shopifyHandle }) {
   return response;
 }
 
-export async function createOrder({
-  imageUrl,
-  base64Image,
-  variantId,
-  position = { x: 0.5, y: 0.5, scale: 1.0, angle: 0 },
-  recipient,
-}) {
+export async function createOrder({ imageUrl, base64Image, variantId, quantity = 1, position, recipient, printArea, meta }) {
+
   if ((!imageUrl && !base64Image) || !variantId || !recipient) {
     console.error('❌ Missing required fields:', { imageUrl, base64Image, variantId, recipient });
     throw new Error('Missing required fields: imageUrl/base64Image, variantId, recipient');
@@ -230,7 +225,7 @@ try {
     line_items: [
       {
         variant_id: parseInt(variantId),
-        quantity: 1,
+        quantity: Math.max(1, Number(quantity) || 1),
         print_provider_id: printProviderId,
         blueprint_id: blueprintId,
         print_areas: {
