@@ -131,20 +131,31 @@ function verifyAppProxy(req) {
 
 async function handlePrintifyOrder(order) {
   // Flatten useful fields from Shopify line items
- const items = order.line_items.map((item) => {
-  const custom_image = item.properties?.find(p => p.name === '_custom_image')?.value;
-  const design_specs_raw = item.properties?.find(p => p.name === '_design_specs')?.value;
-  const design_specs = design_specs_raw ? (() => { try { return JSON.parse(design_specs_raw); } catch { return null; } })() : null;
+  const items = order.line_items.map((item) => {
+    const props = Array.isArray(item.properties) ? item.properties : [];
 
-  return {
-    title: item.title,
-    variant_id: item.variant_id,     // Shopify variant ID
-    quantity: item.quantity || 1,    // ← add this
-    custom_image,
-    design_specs
-  };
-});
+    const getProp = (name) => {
+      const p = props.find(x => x && x.name === name);
+      return p ? String(p.value || '') : '';
+    };
 
+    const custom_image      = getProp('_custom_image');
+    const clues_image_url   = getProp('_clues_image_url');   // 🔹 clues image (if generated)
+    const clue_output_mode  = getProp('_clue_output');       // 🔹 'back' | 'postcard' | 'none'
+
+    const design_specs_raw  = getProp('_design_specs');
+    const design_specs = design_specs_raw ? (() => { try { return JSON.parse(design_specs_raw); } catch { return null; } })() : null;
+
+    return {
+      title: item.title,
+      variant_id: item.variant_id,              // Shopify variant ID
+      quantity: item.quantity || 1,
+      custom_image,
+      clues_image_url,
+      clue_output_mode,
+      design_specs
+    };
+  });
 
   for (const item of items) {
     if (!item.custom_image || !item.variant_id) {
@@ -179,8 +190,7 @@ async function handlePrintifyOrder(order) {
       }
     }
 
-    // We center the artwork; angle 0 for now. (Top/left handled in editor UI.)
-    // Compute normalized center from editor offsets
+    // Compute normalized center from editor offsets (top/left were pixels in the print area)
     const topPx  = parseFloat(item.design_specs?.top || '0');
     const leftPx = parseFloat(item.design_specs?.left || '0');
     let x = 0.5, y = 0.5;
@@ -202,16 +212,21 @@ async function handlePrintifyOrder(order) {
       country: order.shipping_address?.country_code || ''
     };
 
+    // 🔹 Only send back image to Printify if user chose to print clues on back
+    const backImageUrl =
+      item.clue_output_mode === 'back' && item.clues_image_url ? item.clues_image_url : undefined;
+
     try {
-const response = await createOrder({
-  imageUrl: item.custom_image,
-  variantId: printifyVariantId,
-  quantity: item.quantity,          // ← pass it through
-  position,
-  recipient,
-  printArea: area || undefined,
-  meta: { shopifyVid, title: item.title }
-});
+      const response = await createOrder({
+        imageUrl: item.custom_image,
+        backImageUrl,                     // ✅ NEW: pass back image for printing on back (when selected)
+        variantId: printifyVariantId,
+        quantity: item.quantity,
+        position,
+        recipient,
+        printArea: area || undefined,
+        meta: { shopifyVid, title: item.title }
+      });
       console.log('✅ Printify order created:', response?.id || '[no id]', { shopifyVid, printifyVariantId, scale });
     } catch (err) {
       console.error('❌ Failed to create Printify order:', { shopifyVid, printifyVariantId, scale, err: err?.message || err });
@@ -387,7 +402,16 @@ const submittedOrders = new Set();  // memory-only cache
 
 app.post('/api/printify/order', async (req, res) => {
   try {
-    const { imageUrl, base64Image, variantId, position, recipient, quantity } = req.body;
+    const {
+      imageUrl,
+      backImageUrl,          // ✅ NEW
+      base64Image,
+      variantId,
+      position,
+      recipient,
+      quantity
+    } = req.body;
+
     const { orderId } = req.body;
     console.log('Received orderId:', orderId);
 
@@ -411,17 +435,28 @@ app.post('/api/printify/order', async (req, res) => {
     console.log('Creating order with:', {
       hasImageUrl: !!imageUrl,
       hasBase64: !!base64Image,
+      hasBackImage: !!backImageUrl,
       variantId,
       recipient: recipient.name
     });
 
-    const order = await createOrder({ imageUrl, base64Image, variantId, quantity, position, recipient });
+    const order = await createOrder({
+      imageUrl,
+      backImageUrl,          // ✅ pass through
+      base64Image,
+      variantId,
+      quantity,
+      position,
+      recipient
+    });
+
     res.json({ success: true, order });
   } catch (err) {
     console.error('Order creation failed:', err);
     res.status(500).json({ error: 'Order creation failed', details: err.message });
   }
 });
+
 
 // Explicit preflight + CORS for this route (belt & suspenders)
 app.options('/save-crossword', cors(corsOptions));
@@ -447,21 +482,33 @@ app.post('/save-crossword', cors(corsOptions), async (req, res) => {
 
 app.post('/api/printify/order-from-url', async (req, res) => {
   try {
-    const { cloudinaryUrl, variantId, position, recipient, quantity } = req.body;
+    const { cloudinaryUrl, backImageUrl, variantId, position, recipient, quantity } = req.body;
 
     if (!cloudinaryUrl || !variantId || !recipient) {
       return res.status(400).json({ error: 'Missing required fields: cloudinaryUrl, variantId, recipient', success: false });
     }
 
-    console.log('Creating order directly from Cloudinary URL:', cloudinaryUrl);
+    console.log('Creating order directly from Cloudinary URL:', {
+      cloudinaryUrl,
+      hasBackImage: !!backImageUrl
+    });
 
-   const order = await createOrder({ imageUrl: cloudinaryUrl, variantId, quantity, position, recipient });
+    const order = await createOrder({
+      imageUrl: cloudinaryUrl,
+      backImageUrl,          // ✅ pass through
+      variantId,
+      quantity,
+      position,
+      recipient
+    });
+
     res.json({ success: true, order });
   } catch (err) {
     console.error('Order creation failed:', err);
     res.status(500).json({ error: 'Order creation failed', details: err.message });
   }
 });
+
 
 app.get('/products', async (req, res) => {
   try {
