@@ -587,7 +587,9 @@ app.get('/apps/crossword/products', async (req, res) => {
       const shopifyId = String(preferred.id);
       const printifyVariantId = variantMap[shopifyId] || null;
       const img = p.image?.src || p.images?.[0]?.src || '';
-
+      const imageById = new Map();
+(p.images || []).forEach(im => imageById.set(im.id, im.src));
+      
       // Build per-variant list for size/color selection
       const variantList = (Array.isArray(p.variants) ? p.variants : [])
         .filter(v => mappedIds.has(String(v.id)))
@@ -600,6 +602,19 @@ app.get('/apps/crossword/products', async (req, res) => {
           printArea: printAreas[String(v.id)] || DEFAULT_AREA
         }));
 
+      const allVariantList = (Array.isArray(p.variants) ? p.variants : [])
+  .map(v => ({
+    title: v.title || [v.option1, v.option2, v.option3].filter(Boolean).join(' / '),
+    shopifyVariantId: String(v.id),
+    // Still include (possibly null) mapping so UI can disable unorderable combos
+    printifyVariantId: variantMap[String(v.id)] || null,
+    price: parseFloat(v.price) || 0,
+    options: { option1: v.option1, option2: v.option2, option3: v.option3 },
+    printArea: printAreas[String(v.id)] || DEFAULT_AREA,
+    // ADD: per-variant image
+    image: imageById.get(v.image_id) || img
+  }));
+      
       const printifyProductId = printifyVariantId ? (pifyVariantToProduct.get(printifyVariantId) || null) : null;
       // Fetch live placeholder for this Printify variant (front)
       let liveArea = null;
@@ -639,7 +654,8 @@ app.get('/apps/crossword/products', async (req, res) => {
         printifyProductId,
         variantId: preferred?.id || null,
         price: parseFloat(preferred?.price) || 0,
-        printArea: liveArea || printAreas[String(preferred?.id)] || DEFAULT_AREA
+        printArea: liveArea || printAreas[String(preferred?.id)] || DEFAULT_AREA,
+         allVariants: allVariantList
       });
     }
 
