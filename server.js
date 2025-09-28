@@ -702,6 +702,12 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
       y: req.query.y ? parseFloat(req.query.y) : 0.5,
       scale: req.query.scale ? parseFloat(req.query.scale) : 1,
       angle: req.query.angle ? parseFloat(req.query.angle) : 0,
+    }
+          const backPosition = {
+      x: req.query.x ? parseFloat(req.query.x) : 0.5,
+      y: req.query.y ? parseFloat(req.query.y) : 0.5,
+      scale: req.query.scale ? parseFloat(req.query.scale) : 1,
+      angle: req.query.angle ? parseFloat(req.query.angle) : 0,
     };
 
     
@@ -717,7 +723,7 @@ if (backImageUrl) {
 }
 
 if (uploadedBack?.id) {
-  await applyImagesToProductDual(productId, parseInt(variantId), uploaded.id, uploadedBack.id, position);
+  await applyImagesToProductDual(productId, parseInt(variantId), uploaded.id, uploadedBack.id, position,backPosition);
 } else {
   await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
 }
