@@ -544,7 +544,7 @@ app.get('/products', async (req, res) => {
 
 app.get('/apps/crossword/products', async (req, res) => {
   try {
-    const DEFAULT_AREA = { width: 300, height: 300, top: 50, left: 50 };
+    const DEFAULT_AREA = { width: 800, height: 500, top: 50, left: 50 };
 
     const shopifyRes = await fetch(
       `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`,
@@ -617,6 +617,9 @@ app.get('/apps/crossword/products', async (req, res) => {
           );
           const vMeta = variantsRes?.variants?.find(v => v.id === printifyVariantId);
           const ph = vMeta?.placeholders?.find(ph => ph.position === 'front');
+          const optionNames = Array.isArray(p.options)
+  ? p.options.map(o => (o.name || '').toLowerCase())
+  : [];
           if (ph?.width && ph?.height) {
             liveArea = { width: ph.width, height: ph.height, top: ph.top || 0, left: ph.left || 0 };
           }
@@ -635,7 +638,8 @@ app.get('/apps/crossword/products', async (req, res) => {
         printifyProductId,
         variantId: preferred?.id || null,
         price: parseFloat(preferred?.price) || 0,
-        printArea: liveArea || printAreas[String(preferred?.id)] || DEFAULT_AREA
+        printArea: liveArea || printAreas[String(preferred?.id)] || DEFAULT_AREA,
+        optionNames
       });
     }
 
