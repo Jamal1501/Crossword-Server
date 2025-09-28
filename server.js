@@ -631,7 +631,6 @@ app.get('/apps/crossword/products', async (req, res) => {
         id: p.id,      // Printify product ID
         printifyVariantId,          // Printify variant ID
         variants: variantList,
-        optionNames,
         title: p.title,
         handle: p.handle || '',
         image: img || '',
