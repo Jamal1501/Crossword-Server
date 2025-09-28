@@ -631,6 +631,7 @@ app.get('/apps/crossword/products', async (req, res) => {
         id: p.id,      // Printify product ID
         printifyVariantId,          // Printify variant ID
         variants: variantList,
+        optionNames,
         title: p.title,
         handle: p.handle || '',
         image: img || '',
@@ -638,8 +639,7 @@ app.get('/apps/crossword/products', async (req, res) => {
         printifyProductId,
         variantId: preferred?.id || null,
         price: parseFloat(preferred?.price) || 0,
-        printArea: liveArea || printAreas[String(preferred?.id)] || DEFAULT_AREA,
-        optionNames
+        printArea: liveArea || printAreas[String(preferred?.id)] || DEFAULT_AREA
       });
     }
 
