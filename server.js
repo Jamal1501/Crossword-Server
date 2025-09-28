@@ -617,21 +617,22 @@ app.get('/apps/crossword/products', async (req, res) => {
           );
           const vMeta = variantsRes?.variants?.find(v => v.id === printifyVariantId);
           const ph = vMeta?.placeholders?.find(ph => ph.position === 'front');
-          const optionNames = Array.isArray(p.options)
-  ? p.options.map(o => (o.name || '').toLowerCase())
-  : [];
+
           if (ph?.width && ph?.height) {
             liveArea = { width: ph.width, height: ph.height, top: ph.top || 0, left: ph.left || 0 };
           }
         }
       }
-
+          const optionNames = Array.isArray(p.options)
+  ? p.options.map(o => (o.name || '').toLowerCase())
+  : [];
       out.push({
         // new fields for editor preview
         id: p.id,      // Printify product ID
         printifyVariantId,          // Printify variant ID
         variants: variantList,
         title: p.title,
+        optionNames,
         handle: p.handle || '',
         image: img || '',
         shopifyVariantId: String(preferred?.id || ''),
