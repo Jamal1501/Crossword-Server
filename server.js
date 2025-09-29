@@ -6,14 +6,26 @@ import bodyParser from 'body-parser';
 import cors from 'cors';
 import fetch from 'node-fetch';
 import { v2 as cloudinary } from 'cloudinary';
-import * as printifyService from './services/printifyService.js';
-import { safeFetch } from './services/printifyService.js';
 import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { PDFDocument, rgb } from 'pdf-lib';
 import axios from 'axios';
+
+// Unified Printify service imports
+import {
+  createOrder,
+  getShopId,
+  findBlueprintId,
+  listPrintProviders,
+  listVariants,
+  safeFetch,
+  uploadImageFromUrl,
+  applyImageToProduct,
+  applyImagesToProductDual,
+  fetchProduct
+} from './services/printifyService.js';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -44,7 +56,6 @@ const corsOptions = {
   credentials: true,
 };
 
-const { createOrder } = printifyService;
 const app = express();
 
 // --- CORS & parsers (run BEFORE routes) ---
@@ -251,7 +262,7 @@ app.post('/webhooks/orders/create', async (req, res) => {
   const order = JSON.parse(rawBody.toString());
   console.log('✅ Verified webhook for order:', order.id);
 
-    // [ADD] Record paid puzzleIds and their assets for PDF
+  // [ADD] Record paid puzzleIds and their assets for PDF
   try {
     const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
     const seen = [];
@@ -266,8 +277,8 @@ app.post('/webhooks/orders/create', async (req, res) => {
       const pid = getProp('_puzzle_id');
       if (!pid) continue;
 
-      const crosswordImage = getProp('_custom_image');      // from addToCart
-      const cluesImage     = getProp('_clues_image_url');   // always added in 1C
+      const crosswordImage = getProp('_custom_image');    // from addToCart
+      const cluesImage     = getProp('_clues_image_url'); // always added in 1C
 
       PaidPuzzles.set(pid, {
         orderId: String(order.id),
@@ -292,40 +303,6 @@ app.post('/webhooks/orders/create', async (req, res) => {
     return res.status(200).send('ok (duplicate ignored)');
   }
   processedShopifyOrders.add(order.id);
-    // [ADD] Record paid puzzleIds and their assets for PDF
-  try {
-    const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
-    const seen = [];
-
-    for (const li of lineItems) {
-      const props = Array.isArray(li.properties) ? li.properties : [];
-      const getProp = (name) => {
-        const p = props.find(x => x && x.name === name);
-        return p ? String(p.value || '') : '';
-      };
-
-      const pid = getProp('_puzzle_id');
-      if (!pid) continue;
-
-      const crosswordImage = getProp('_custom_image');      // from addToCart
-      const cluesImage     = getProp('_clues_image_url');   // we added in A.3
-
-      PaidPuzzles.set(pid, {
-        orderId: String(order.id),
-        email: (order.email || order?.customer?.email || '') + '',
-        crosswordImage,
-        cluesImage,
-        when: new Date().toISOString(),
-      });
-      seen.push(pid);
-    }
-
-    if (seen.length) {
-      console.log('🔐 Stored paid puzzleIds:', seen);
-    }
-  } catch (e) {
-    console.error('❌ Failed to index paid puzzleIds', e);
-  }
 
   await handlePrintifyOrder(order);
   res.status(200).send('Webhook received');
@@ -366,7 +343,7 @@ app.get('/health', (req, res) => {
 
 app.get('/api/printify/test', async (req, res) => {
   try {
-    const shopId = await printifyService.getShopId();
+    const shopId = await getShopId();
     res.json({ success: true, shopId });
   } catch (err) {
     console.error(err);
@@ -376,9 +353,9 @@ app.get('/api/printify/test', async (req, res) => {
 
 app.get('/api/printify/test-variant', async (req, res) => {
   try {
-    const blueprintId = await printifyService.findBlueprintId('mug');
-    const providers = await printifyService.listPrintProviders(blueprintId);
-    const variants = await printifyService.listVariants(blueprintId, providers[0].id);
+    const blueprintId = await findBlueprintId('mug');
+    const providers = await listPrintProviders(blueprintId);
+    const variants = await listVariants(blueprintId, providers[0].id);
     const variant = variants.find(v => v.is_enabled !== false) || variants[0];
 
     res.json({ variantId: variant.id, title: variant.title });
@@ -698,18 +675,16 @@ app.get('/apps/crossword/products', async (req, res) => {
   }
 });
 
-
-import { uploadImageFromUrl, applyImageToProduct, applyImagesToProductDual, fetchProduct } from './services/printifyService.js';
-
+// LEGACY preview endpoint
 app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
   try {
-    const { imageUrl, productId, variantId, backImageUrl } = req.query; // [ADD backImageUrl]
+    const { imageUrl, productId, variantId } = req.query; // backImageUrl not used here
 
     // 1. Upload crossword image to Printify
     const uploadedImage = await uploadImageFromUrl(imageUrl);
 
     // 2. Apply image to product (updates mockups in Printify)
-    const updatedProduct = await applyImageToProduct(productId, variantId, uploadedImage.id);
+    const updatedProduct = await applyImageToProduct(productId, parseInt(variantId), uploadedImage.id);
 
     // 3. Extract preview mockup URLs
     const previewImages = updatedProduct.images.map(img => img.src);
@@ -725,54 +700,73 @@ app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
   }
 });
 
+// CURRENT preview endpoint (supports back image + independent positions)
 app.get('/apps/crossword/preview-product', async (req, res) => {
   try {
-    const { imageUrl, productId, variantId } = req.query;
+    const {
+      imageUrl,
+      productId,
+      variantId,
+      backImageUrl,
+      x, y, scale, angle,
+      backX, backY, backScale, backAngle
+    } = req.query;
 
-    const backImageUrl = req.query.backImageUrl; // [ADD]
-        const position = {
-      x: req.query.x ? parseFloat(req.query.x) : 0.5,
-      y: req.query.y ? parseFloat(req.query.y) : 0.5,
-      scale: req.query.scale ? parseFloat(req.query.scale) : 1,
-      angle: req.query.angle ? parseFloat(req.query.angle) : 0,
-    }
-    // Back (separate params, fall back to front if missing)
-    const { backImageUrl, backX, backY, backScale, backAngle } = req.query;
+    const position = {
+      x: x ? parseFloat(x) : 0.5,
+      y: y ? parseFloat(y) : 0.5,
+      scale: scale ? parseFloat(scale) : 1,
+      angle: angle ? parseFloat(angle) : 0,
+    };
+
     const backPosition = {
       x: backX ? parseFloat(backX) : position.x,
       y: backY ? parseFloat(backY) : position.y,
       scale: backScale ? parseFloat(backScale) : position.scale,
       angle: backAngle ? parseFloat(backAngle) : position.angle,
     };
-    
+
     if (!imageUrl || !productId || !variantId) {
       return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
     }
 
-    // 1. Upload the crossword image
+    // 1. Upload the crossword image(s)
     const uploaded = await uploadImageFromUrl(imageUrl);
-  let uploadedBack = null; // [ADD]
-if (backImageUrl) {
-  uploadedBack = await uploadImageFromUrl(backImageUrl);
-}
 
-if (uploadedBack?.id) {
-  await applyImagesToProductDual(productId, parseInt(variantId), uploaded.id, uploadedBack.id, position, backPosition);
-} else {
-  await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
-}
+    let uploadedBack = null;
+    if (backImageUrl) {
+      uploadedBack = await uploadImageFromUrl(backImageUrl);
+    }
 
-   // 3. Poll for mockups (Printify needs a few seconds)
-let product;
-for (let attempt = 1; attempt <= 10; attempt++) {
-  product = await fetchProduct(productId);
-  const ready = Array.isArray(product?.images) && product.images.some(i => i?.src);
-  if (ready) break;
-  await new Promise(r => setTimeout(r, 1200)); // ~12s max
-}
+    // 2. Apply to product (front only or front+back)
+    if (uploadedBack?.id) {
+      await applyImagesToProductDual(
+        productId,
+        parseInt(variantId),
+        uploaded.id,
+        uploadedBack.id,
+        position,
+        backPosition
+      );
+    } else {
+      await applyImageToProduct(
+        productId,
+        parseInt(variantId),
+        uploaded.id,
+        position
+      );
+    }
 
-res.json({ success: true, uploadedImage: uploaded, product });
+    // 3. Poll for mockups (Printify needs a few seconds)
+    let product;
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      product = await fetchProduct(productId);
+      const ready = Array.isArray(product?.images) && product.images.some(i => i?.src);
+      if (ready) break;
+      await new Promise(r => setTimeout(r, 1200)); // ~12s max
+    }
 
+    res.json({ success: true, uploadedImage: uploaded, product });
   } catch (err) {
     console.error("❌ Preview generation failed:", err.message);
     res.status(500).json({ error: err.message });
@@ -851,7 +845,7 @@ async function transformProducts(printifyData, shopifyData) {
 
       const variant = variantRes?.variants?.find(v => v.id === p.variants[0]?.id);
       console.log('Variant object for', p.title, JSON.stringify(variant, null, 2));
-      const area = variant?.placeholders?.find(p => p.position === 'front');
+      const area = variant?.placeholders?.find(pp => pp.position === 'front');
       console.log('Fetched print area for:', p.title, area);
 
       if (area) {
@@ -1355,3 +1349,4 @@ app.get('/debug/paid-puzzles', (req, res) => {
 });
 
 export default app;
+
