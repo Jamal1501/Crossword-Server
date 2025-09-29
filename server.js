@@ -703,13 +703,14 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
       scale: req.query.scale ? parseFloat(req.query.scale) : 1,
       angle: req.query.angle ? parseFloat(req.query.angle) : 0,
     }
-          const backPosition = {
-      x: req.query.x ? parseFloat(req.query.x) : 0.5,
-      y: req.query.y ? parseFloat(req.query.y) : 0.5,
-      scale: req.query.scale ? parseFloat(req.query.scale) : 1,
-      angle: req.query.angle ? parseFloat(req.query.angle) : 0,
+    // Back (separate params, fall back to front if missing)
+    const { backImageUrl, backX, backY, backScale, backAngle } = req.query;
+    const backPosition = {
+      x: backX ? parseFloat(backX) : position.x,
+      y: backY ? parseFloat(backY) : position.y,
+      scale: backScale ? parseFloat(backScale) : position.scale,
+      angle: backAngle ? parseFloat(backAngle) : position.angle,
     };
-
     
     if (!imageUrl || !productId || !variantId) {
       return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
@@ -723,7 +724,7 @@ if (backImageUrl) {
 }
 
 if (uploadedBack?.id) {
-  await applyImagesToProductDual(productId, parseInt(variantId), uploaded.id, uploadedBack.id, position,backPosition);
+  await applyImagesToProductDual(productId, parseInt(variantId), uploaded.id, uploadedBack.id, position, backPosition);
 } else {
   await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
 }
