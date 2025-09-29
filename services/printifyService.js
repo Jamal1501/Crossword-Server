@@ -382,7 +382,8 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
 }
 
 // Apply front + back images to a product (used for previews)
-export async function applyImagesToProductDual(productId, variantId, frontImageId, backImageId, placement) {
+export async function applyImagesToProductDual(productId, variantId, frontImageId, backImageId, frontPlacement, backPlacement = null
+) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
 
@@ -398,7 +399,7 @@ export async function applyImagesToProductDual(productId, variantId, frontImageI
           id: frontImageId,
           x: placement?.x ?? 0.5,
           y: placement?.y ?? 0.5,
-          scale: placement?.scale ?? 1,
+          scale: placement?.scale ?? 0.9,
           angle: placement?.angle ?? 0
         }]
       },
