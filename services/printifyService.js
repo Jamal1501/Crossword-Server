@@ -1,3 +1,4 @@
+// services/printifyService.js
 import fetch from 'node-fetch';
 
 const BASE_URL = 'https://api.printify.com/v1';
@@ -16,13 +17,55 @@ function authHeaders(extra = {}) {
   };
 }
 
-async function safeFetch(url, options = {}) {
+export async function safeFetch(url, options = {}) {
   const res = await fetch(url, options);
   if (!res.ok) {
-    const txt = await res.text();
+    const txt = await res.text().catch(() => '');
     throw new Error(`${options.method || 'GET'} ${url} → ${res.status}\n${txt}`);
   }
   return res.status === 204 ? null : await res.json();
+}
+
+/* --------------------------
+   Small helper lookups
+--------------------------- */
+
+export async function getShopId() {
+  const data = await safeFetch(`${BASE_URL}/shops.json`, { headers: authHeaders() });
+  const shops = Array.isArray(data) ? data : (data?.data || []);
+  if (!shops.length) throw new Error('No Printify shops available for this API key');
+  return shops[0].id;
+}
+
+export async function findBlueprintId(keyword = '') {
+  const data = await safeFetch(`${BASE_URL}/catalog/blueprints.json`, { headers: authHeaders() });
+  const bps = Array.isArray(data) ? data : (data?.data || []);
+  if (!bps.length) throw new Error('No blueprints returned by Printify');
+
+  if (!keyword) return bps[0].id;
+
+  const kw = String(keyword).toLowerCase();
+  const hit =
+    bps.find(b => String(b.title || '').toLowerCase().includes(kw)) ||
+    bps.find(b => String(b.name || '').toLowerCase().includes(kw));
+
+  return (hit || bps[0]).id;
+}
+
+export async function listPrintProviders(blueprintId) {
+  if (!blueprintId) throw new Error('listPrintProviders: missing blueprintId');
+  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers.json`;
+  const data = await safeFetch(url, { headers: authHeaders() });
+  return Array.isArray(data) ? data : (data?.data || []);
+}
+
+export async function listVariants(blueprintId, printProviderId) {
+  if (!blueprintId || !printProviderId) {
+    throw new Error('listVariants: missing blueprintId or printProviderId');
+  }
+  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
+  const data = await safeFetch(url, { headers: authHeaders() });
+  return Array.isArray(data?.variants) ? data.variants : (data?.data || []);
 }
 
 async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
@@ -39,6 +82,10 @@ function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
   const maxScale = Math.min(1, capByHeight);
   return Math.min(requested ?? 1, maxScale);
 }
+
+/* --------------------------
+   Upload helpers
+--------------------------- */
 
 export async function uploadImageFromUrl(imageUrl) {
   if (!imageUrl || typeof imageUrl !== 'string') {
@@ -94,28 +141,32 @@ export async function uploadImageFromBase64(base64Image) {
   });
 }
 
+/* --------------------------
+   Optional sample creator
+--------------------------- */
+
 export async function createTestProduct({ shopifyTitle, shopifyHandle }) {
   const payload = {
     title: shopifyTitle,
     description: "Auto-created crossword gift product.",
-    blueprint_id: 1, // ← replace with your actual blueprint
-    print_provider_id: 1, // ← replace with your actual provider
+    blueprint_id: 1,          // ← replace with your actual blueprint
+    print_provider_id: 1,     // ← replace with your actual provider
     variants: [
       {
-        id: 111, // ← replace with actual variant ID
+        id: 111,              // ← replace with actual variant ID
         price: 1500,
         is_enabled: true
       }
     ],
     print_areas: [
       {
-        variant_ids: [111], // ← match above
+        variant_ids: [111],
         placeholders: [
           {
             position: "front",
             images: [
               {
-                id: "PLACEHOLDER_IMAGE_ID", // ← optional, can be left empty
+                id: "PLACEHOLDER_IMAGE_ID",
                 x: 0.5,
                 y: 0.5,
                 scale: 1,
@@ -142,8 +193,6 @@ export async function createTestProduct({ shopifyTitle, shopifyHandle }) {
 }
 
 async function getVariantPlaceholderNames(blueprintId, printProviderId, variantId) {
-  const url = `${BASE_URL}/catalog/blueprints/${printProviderId ? `blueprints/${blueprintId}/print_providers/${printProviderId}` : `products/${variantId}`}/variants.json`;
-  // Normal path:
   try {
     const data = await safeFetch(
       `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`,
@@ -156,16 +205,20 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId, variantI
   }
 }
 
+/* --------------------------
+   Order creation (front/back)
+--------------------------- */
+
 export async function createOrder({
   imageUrl,
-  backImageUrl,          // ✅ NEW
+  backImageUrl,
   base64Image,
   variantId,
   quantity = 1,
   position,
   recipient,
-  printArea,
-  meta
+  printArea, // not used, but accepted
+  meta       // not used, but accepted
 }) {
   if ((!imageUrl && !base64Image) || !variantId || !recipient) {
     console.error('❌ Missing required fields:', { imageUrl, base64Image, variantId, recipient });
@@ -232,7 +285,7 @@ export async function createOrder({
 
   if (!printProviderId || !blueprintId || !product) {
     console.error('❌ Could not resolve print_provider_id or blueprint_id for variant:', variantId);
-    console.log('🧪 Scanned variants:', products.flatMap(p => p.variants.map(v => v.id)));
+    console.log('🧪 Scanned variants:', products.flatMap(p => (p.variants || []).map(v => v.id)));
     throw new Error(`Unable to resolve print_provider_id or blueprint_id for variant ${variantId}`);
   }
 
@@ -258,7 +311,7 @@ export async function createOrder({
   // 5) Build print_areas with FRONT (+ optional BACK)
   const printAreas = {
     front: [{
-      src: (uploadedFront.file_url || uploadedFront.preview_url),
+      image_url: (uploadedFront.file_url || uploadedFront.preview_url),
       x: position?.x ?? 0.5,
       y: position?.y ?? 0.5,
       scale: finalScale,
@@ -267,22 +320,20 @@ export async function createOrder({
   };
 
   if (uploadedBack) {
-    // Detect the correct placeholder name for the back side if possible
     let backKey = 'back';
     try {
       const names = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
       if (!names.includes('back')) {
-        // Pick any placeholder that isn't 'front'
         const alt = names.find(n => (n || '').toLowerCase() !== 'front');
         if (alt) backKey = alt;
       }
-      console.log('🔎 Using back placeholder key:', backKey, 'from', names);
+      console.log('🔎 Using back placeholder key:', backKey);
     } catch {
       // keep 'back'
     }
 
     printAreas[backKey] = [{
-      src: (uploadedBack.file_url || uploadedBack.preview_url),
+      image_url: (uploadedBack.file_url || uploadedBack.preview_url),
       x: 0.5,
       y: 0.5,
       scale: 1,
@@ -317,28 +368,24 @@ export async function createOrder({
 
   console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
 
-  try {
-    const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
-    const orderRes = await safeFetch(url, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(payload)
-    });
-    console.log('✅ Printify order successfully created:', orderRes?.id || '[no id]');
-    return orderRes;
-  } catch (orderErr) {
-    console.error('❌ Printify order creation failed:', orderErr.message);
-    throw orderErr;
-  }
+  const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
+  const orderRes = await safeFetch(url, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+  console.log('✅ Printify order successfully created:', orderRes?.id || '[no id]');
+  return orderRes;
 }
 
+/* --------------------------
+   Product preview updaters
+--------------------------- */
 
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement, imageMeta) {
-  // 1. Get current product config
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
 
-  // 2. Reuse all variants, only patch the print_areas
   const allVariantIds = product.variants.map(v => v.id);
 
   const updatedPrintAreas = product.print_areas.map(area => ({
@@ -360,19 +407,15 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     ]
   }));
 
-  // @LF-ANCHOR: restrict-to-variant
-  const finalPrintAreas = updatedPrintAreas; // keep all variant_ids as-is
-
   const payload = {
     title: product.title,
     description: product.description,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
-    variants: product.variants,   // keep all variants
-    print_areas: finalPrintAreas
+    variants: product.variants,
+    print_areas: updatedPrintAreas
   };
 
-  // 3. PUT back to Printify
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   return safeFetch(updateUrl, {
     method: 'PUT',
@@ -382,12 +425,25 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
 }
 
 // Apply front + back images to a product (used for previews)
-export async function applyImagesToProductDual(productId, variantId, frontImageId, backImageId, frontPlacement, backPlacement = null
+export async function applyImagesToProductDual(
+  productId,
+  variantId,
+  frontImageId,
+  backImageId,
+  frontPlacement,
+  backPlacement = null
 ) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
 
   const allVariantIds = product.variants.map(v => v.id);
+
+  const finalBackPlacement = backPlacement || {
+    x: frontPlacement?.x ?? 0.5,
+    y: frontPlacement?.y ?? 0.5,
+    scale: frontPlacement?.scale ?? 1,
+    angle: frontPlacement?.angle ?? 0,
+  };
 
   const updatedPrintAreas = product.print_areas.map(area => ({
     ...area,
@@ -397,17 +453,20 @@ export async function applyImagesToProductDual(productId, variantId, frontImageI
         position: "front",
         images: [{
           id: frontImageId,
-          x: placement?.x ?? 0.5,
-          y: placement?.y ?? 0.5,
-          scale: placement?.scale ?? 0.9,
-          angle: placement?.angle ?? 0
+          x: frontPlacement?.x ?? 0.5,
+          y: frontPlacement?.y ?? 0.5,
+          scale: frontPlacement?.scale ?? 0.9,
+          angle: frontPlacement?.angle ?? 0
         }]
       },
       {
         position: "back",
         images: [{
           id: backImageId,
-          x: 0.5, y: 0.5, scale: 1, angle: 0
+          x: finalBackPlacement.x ?? 0.5,
+          y: finalBackPlacement.y ?? 0.5,
+          scale: finalBackPlacement.scale ?? 1,
+          angle: finalBackPlacement.angle ?? 0
         }]
       }
     ]
@@ -440,5 +499,3 @@ export async function fetchProduct(productId) {
     headers: authHeaders(),
   });
 }
-
-export { safeFetch };
