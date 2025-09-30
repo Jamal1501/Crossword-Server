@@ -6,26 +6,14 @@ import bodyParser from 'body-parser';
 import cors from 'cors';
 import fetch from 'node-fetch';
 import { v2 as cloudinary } from 'cloudinary';
+import * as printifyService from './services/printifyService.js';
+import { safeFetch } from './services/printifyService.js';
 import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { PDFDocument, rgb } from 'pdf-lib';
 import axios from 'axios';
-
-// Unified Printify service imports
-import {
-  createOrder,
-  getShopId,
-  findBlueprintId,
-  listPrintProviders,
-  listVariants,
-  safeFetch,
-  uploadImageFromUrl,
-  applyImageToProduct,
-  applyImagesToProductDual,
-  fetchProduct
-} from './services/printifyService.js';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -56,6 +44,7 @@ const corsOptions = {
   credentials: true,
 };
 
+const { createOrder } = printifyService;
 const app = express();
 
 // --- CORS & parsers (run BEFORE routes) ---
@@ -262,7 +251,7 @@ app.post('/webhooks/orders/create', async (req, res) => {
   const order = JSON.parse(rawBody.toString());
   console.log('✅ Verified webhook for order:', order.id);
 
-  // [ADD] Record paid puzzleIds and their assets for PDF
+    // [ADD] Record paid puzzleIds and their assets for PDF
   try {
     const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
     const seen = [];
@@ -277,8 +266,8 @@ app.post('/webhooks/orders/create', async (req, res) => {
       const pid = getProp('_puzzle_id');
       if (!pid) continue;
 
-      const crosswordImage = getProp('_custom_image');    // from addToCart
-      const cluesImage     = getProp('_clues_image_url'); // always added in 1C
+      const crosswordImage = getProp('_custom_image');      // from addToCart
+      const cluesImage     = getProp('_clues_image_url');   // always added in 1C
 
       PaidPuzzles.set(pid, {
         orderId: String(order.id),
@@ -303,6 +292,40 @@ app.post('/webhooks/orders/create', async (req, res) => {
     return res.status(200).send('ok (duplicate ignored)');
   }
   processedShopifyOrders.add(order.id);
+    // [ADD] Record paid puzzleIds and their assets for PDF
+  try {
+    const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+    const seen = [];
+
+    for (const li of lineItems) {
+      const props = Array.isArray(li.properties) ? li.properties : [];
+      const getProp = (name) => {
+        const p = props.find(x => x && x.name === name);
+        return p ? String(p.value || '') : '';
+      };
+
+      const pid = getProp('_puzzle_id');
+      if (!pid) continue;
+
+      const crosswordImage = getProp('_custom_image');      // from addToCart
+      const cluesImage     = getProp('_clues_image_url');   // we added in A.3
+
+      PaidPuzzles.set(pid, {
+        orderId: String(order.id),
+        email: (order.email || order?.customer?.email || '') + '',
+        crosswordImage,
+        cluesImage,
+        when: new Date().toISOString(),
+      });
+      seen.push(pid);
+    }
+
+    if (seen.length) {
+      console.log('🔐 Stored paid puzzleIds:', seen);
+    }
+  } catch (e) {
+    console.error('❌ Failed to index paid puzzleIds', e);
+  }
 
   await handlePrintifyOrder(order);
   res.status(200).send('Webhook received');
@@ -343,7 +366,7 @@ app.get('/health', (req, res) => {
 
 app.get('/api/printify/test', async (req, res) => {
   try {
-    const shopId = await getShopId();
+    const shopId = await printifyService.getShopId();
     res.json({ success: true, shopId });
   } catch (err) {
     console.error(err);
@@ -353,9 +376,9 @@ app.get('/api/printify/test', async (req, res) => {
 
 app.get('/api/printify/test-variant', async (req, res) => {
   try {
-    const blueprintId = await findBlueprintId('mug');
-    const providers = await listPrintProviders(blueprintId);
-    const variants = await listVariants(blueprintId, providers[0].id);
+    const blueprintId = await printifyService.findBlueprintId('mug');
+    const providers = await printifyService.listPrintProviders(blueprintId);
+    const variants = await printifyService.listVariants(blueprintId, providers[0].id);
     const variant = variants.find(v => v.is_enabled !== false) || variants[0];
 
     res.json({ variantId: variant.id, title: variant.title });
@@ -523,13 +546,6 @@ app.get('/apps/crossword/products', async (req, res) => {
   try {
     const DEFAULT_AREA = { width: 800, height: 500, top: 50, left: 50 };
 
-    // Editor default tweaks (normalized offsets)
-    const DEFAULT_PLACEMENT = {
-      front: { scaleMul: 0.85, xAdd: 0.00, yAdd: -0.02, angle: 0 },
-      back:  { scaleMul: 0.85, xAdd: 0.00, yAdd: -0.02, angle: 0 }
-    };
-
-    // --- Load Shopify products
     const shopifyRes = await fetch(
       `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`,
       { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD, 'Content-Type': 'application/json' } }
@@ -538,7 +554,7 @@ app.get('/apps/crossword/products', async (req, res) => {
 
     const { products: shopifyProducts } = await shopifyRes.json();
 
-    // --- Load Printify product list (for blueprint/PP IDs & variant->product mapping)
+    // Map Printify variantId -> productId for later use
     const printifyListUrl = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`;
     const printifyList = await safeFetch(printifyListUrl, {
       headers: {
@@ -547,11 +563,11 @@ app.get('/apps/crossword/products', async (req, res) => {
       },
     });
 
+    // Ensure we have an array of products
     const pifyArray = Array.isArray(printifyList?.data)
       ? printifyList.data
       : (Array.isArray(printifyList) ? printifyList : []);
 
-    // Map Printify variantId -> Printify productId
     const pifyVariantToProduct = new Map();
     for (const prod of pifyArray) {
       for (const v of (prod.variants || [])) {
@@ -560,66 +576,48 @@ app.get('/apps/crossword/products', async (req, res) => {
     }
 
     const out = [];
-
     for (const p of shopifyProducts) {
-      if (!['active', 'draft'].includes(p.status)) continue;
+      if (!['active','draft'].includes(p.status)) continue;
 
+      // prefer a variant we have a mapping for; otherwise take the first variant
+      const mappedIds = new Set(Object.keys(variantMap));
+      const preferred = p.variants.find(v => mappedIds.has(String(v.id))) || p.variants[0];
+      if (!preferred) continue;
+
+      const shopifyId = String(preferred.id);
+      const printifyVariantId = variantMap[shopifyId] || null;
+      const img = p.image?.src || p.images?.[0]?.src || '';
       const imageById = new Map();
-      (p.images || []).forEach(im => imageById.set(im.id, im.src));
-      const heroImg = p.image?.src || p.images?.[0]?.src || '';
+(p.images || []).forEach(im => imageById.set(im.id, im.src));
+      
+      // Build per-variant list for size/color selection
+      const variantList = (Array.isArray(p.variants) ? p.variants : [])
+        .filter(v => mappedIds.has(String(v.id)))
+        .map(v => ({
+          title: v.title || [v.option1, v.option2, v.option3].filter(Boolean).join(' / '),
+          shopifyVariantId: String(v.id),
+          printifyVariantId: variantMap[String(v.id)] || null,
+          price: parseFloat(v.price) || 0,
+          options: { option1: v.option1, option2: v.option2, option3: v.option3 },
+          printArea: printAreas[String(v.id)] || DEFAULT_AREA
+        }));
 
-      const mappedIds = new Set(Object.keys(variantMap)); // Shopify variant ids that map to Printify
-
-      // Only variants that we can actually fulfill (mapped to Printify)
-      const orderableVariants = (Array.isArray(p.variants) ? p.variants : [])
-        .filter(v => mappedIds.has(String(v.id)));
-
-      // If no mapped variants, skip product
-      if (!orderableVariants.length) continue;
-
-      // Build per-variant objects
-      const variantList = orderableVariants.map(v => ({
-        title: v.title || [v.option1, v.option2, v.option3].filter(Boolean).join(' / '),
-        shopifyVariantId: String(v.id),
-        printifyVariantId: variantMap[String(v.id)] || null,
-        price: parseFloat(v.price) || 0,
-        options: { option1: v.option1, option2: v.option2, option3: v.option3 },
-        image: imageById.get(v.image_id) || heroImg
-      }));
-
-      // Determine default (first orderable) variant
-      const defaultVariant = variantList[0];
-      const printifyVariantId = defaultVariant.printifyVariantId;
+      const allVariantList = (Array.isArray(p.variants) ? p.variants : [])
+  .map(v => ({
+    title: v.title || [v.option1, v.option2, v.option3].filter(Boolean).join(' / '),
+    shopifyVariantId: String(v.id),
+    // Still include (possibly null) mapping so UI can disable unorderable combos
+    printifyVariantId: variantMap[String(v.id)] || null,
+    price: parseFloat(v.price) || 0,
+    options: { option1: v.option1, option2: v.option2, option3: v.option3 },
+    printArea: printAreas[String(v.id)] || DEFAULT_AREA,
+    // ADD: per-variant image
+    image: imageById.get(v.image_id) || img
+  }));
+      
       const printifyProductId = printifyVariantId ? (pifyVariantToProduct.get(printifyVariantId) || null) : null;
-
-      // Compute which options actually vary across orderable variants
-      const rawOptions = Array.isArray(p.options) ? p.options : [];
-      // Collect distinct values per option index
-      const distinct = { option1: new Set(), option2: new Set(), option3: new Set() };
-      for (const v of orderableVariants) {
-        if (v.option1) distinct.option1.add(v.option1);
-        if (v.option2) distinct.option2.add(v.option2);
-        if (v.option3) distinct.option3.add(v.option3);
-      }
-
-      // Only include options that have >1 unique value
-      const optionSchemas = [];
-      rawOptions.forEach((opt, idx) => {
-        const key = `option${idx + 1}`;
-        const values = Array.from(distinct[key] || []);
-        if (values.length > 1) {
-          optionSchemas.push({
-            name: (opt.name || '').toLowerCase(),  // e.g., 'size', 'color'
-            position: idx + 1,                     // 1..3
-            values                                // distinct values (strings)
-          });
-        }
-      });
-
-      // Resolve live print area from catalog (front), detect back availability
+      // Fetch live placeholder for this Printify variant (front)
       let liveArea = null;
-      let hasBack = false;
-
       if (printifyProductId && printifyVariantId) {
         const prodMeta = pifyArray.find(pr => pr.id === printifyProductId);
         if (prodMeta) {
@@ -632,49 +630,32 @@ app.get('/apps/crossword/products', async (req, res) => {
               },
             }
           );
+          const vMeta = variantsRes?.variants?.find(v => v.id === printifyVariantId);
+          const ph = vMeta?.placeholders?.find(ph => ph.position === 'front');
 
-          const vMeta = Array.isArray(variantsRes?.variants)
-            ? variantsRes.variants.find(v => v.id === printifyVariantId)
-            : null;
-
-          const phFront = vMeta?.placeholders?.find(ph => ph.position === 'front');
-          const phBack  = vMeta?.placeholders?.find(ph => ph.position === 'back');
-          hasBack = !!phBack;
-
-          if (phFront?.width && phFront?.height) {
-            liveArea = {
-              width: phFront.width,
-              height: phFront.height,
-              top: phFront.top || 0,
-              left: phFront.left || 0
-            };
+          if (ph?.width && ph?.height) {
+            liveArea = { width: ph.width, height: ph.height, top: ph.top || 0, left: ph.left || 0 };
           }
         }
       }
-
+          const optionNames = Array.isArray(p.options)
+  ? p.options.map(o => (o.name || '').toLowerCase())
+  : [];
       out.push({
-        // Product metadata
-        shopifyProductId: String(p.id),
-        title: p.title,
-        handle: p.handle || '',
-        image: heroImg,
-
-        // Default variant (use THIS per product when nothing is selected)
-        defaultShopifyVariantId: defaultVariant.shopifyVariantId,
-        defaultPrice: defaultVariant.price,
-
-        // Variants you can choose from for THIS product
+        // new fields for editor preview
+        id: p.id,      // Printify product ID
+        printifyVariantId,          // Printify variant ID
         variants: variantList,
-
-        // Only render selectors for these options
-        optionSchemas, // e.g., [{ name: 'size', position: 1, values: ['S','M','L'] }]
-
-        // Geometry + defaults for the editor
+        title: p.title,
+        optionNames,
+        handle: p.handle || '',
+        image: img || '',
+        shopifyVariantId: String(preferred?.id || ''),
         printifyProductId,
-        printifyVariantId,
-        printArea: liveArea || (printAreas[defaultVariant.shopifyVariantId] || DEFAULT_AREA),
-        placementDefaults: DEFAULT_PLACEMENT,
-        hasBack
+        variantId: preferred?.id || null,
+        price: parseFloat(preferred?.price) || 0,
+        printArea: liveArea || printAreas[String(preferred?.id)] || DEFAULT_AREA,
+         allVariants: allVariantList
       });
     }
 
@@ -685,17 +666,17 @@ app.get('/apps/crossword/products', async (req, res) => {
   }
 });
 
+import { uploadImageFromUrl, applyImageToProduct, applyImagesToProductDual, fetchProduct } from './services/printifyService.js';
 
-// LEGACY preview endpoint
 app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
   try {
-    const { imageUrl, productId, variantId } = req.query; // backImageUrl not used here
+    const { imageUrl, productId, variantId, backImageUrl } = req.query; // [ADD backImageUrl]
 
     // 1. Upload crossword image to Printify
     const uploadedImage = await uploadImageFromUrl(imageUrl);
 
     // 2. Apply image to product (updates mockups in Printify)
-    const updatedProduct = await applyImageToProduct(productId, parseInt(variantId), uploadedImage.id);
+    const updatedProduct = await applyImageToProduct(productId, variantId, uploadedImage.id);
 
     // 3. Extract preview mockup URLs
     const previewImages = updatedProduct.images.map(img => img.src);
@@ -711,73 +692,53 @@ app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
   }
 });
 
-// CURRENT preview endpoint (supports back image + independent positions)
 app.get('/apps/crossword/preview-product', async (req, res) => {
   try {
-    const {
-      imageUrl,
-      productId,
-      variantId,
-      backImageUrl,
-      x, y, scale, angle,
-      backX, backY, backScale, backAngle
-    } = req.query;
+    const { imageUrl, productId, variantId } = req.query;
 
-    const position = {
-      x: x ? parseFloat(x) : 0.5,
-      y: y ? parseFloat(y) : 0.5,
-      scale: scale ? parseFloat(scale) : 1,
-      angle: angle ? parseFloat(angle) : 0,
+    const backImageUrl = req.query.backImageUrl; // [ADD]
+        const position = {
+      x: req.query.x ? parseFloat(req.query.x) : 0.5,
+      y: req.query.y ? parseFloat(req.query.y) : 0.5,
+      scale: req.query.scale ? parseFloat(req.query.scale) : 1,
+      angle: req.query.angle ? parseFloat(req.query.angle) : 0,
+    }
+          const backPosition = {
+      x: req.query.x ? parseFloat(req.query.x) : 0.5,
+      y: req.query.y ? parseFloat(req.query.y) : 0.5,
+      scale: req.query.scale ? parseFloat(req.query.scale) : 1,
+      angle: req.query.angle ? parseFloat(req.query.angle) : 0,
     };
 
-    const backPosition = {
-      x: backX ? parseFloat(backX) : position.x,
-      y: backY ? parseFloat(backY) : position.y,
-      scale: backScale ? parseFloat(backScale) : position.scale,
-      angle: backAngle ? parseFloat(backAngle) : position.angle,
-    };
-
+    
     if (!imageUrl || !productId || !variantId) {
       return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
     }
 
-    // 1. Upload the crossword image(s)
+    // 1. Upload the crossword image
     const uploaded = await uploadImageFromUrl(imageUrl);
+  let uploadedBack = null; // [ADD]
+if (backImageUrl) {
+  uploadedBack = await uploadImageFromUrl(backImageUrl);
+}
 
-    let uploadedBack = null;
-    if (backImageUrl) {
-      uploadedBack = await uploadImageFromUrl(backImageUrl);
-    }
+if (uploadedBack?.id) {
+  await applyImagesToProductDual(productId, parseInt(variantId), uploaded.id, uploadedBack.id, position,backPosition);
+} else {
+  await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
+}
 
-    // 2. Apply to product (front only or front+back)
-    if (uploadedBack?.id) {
-      await applyImagesToProductDual(
-        productId,
-        parseInt(variantId),
-        uploaded.id,
-        uploadedBack.id,
-        position,
-        backPosition
-      );
-    } else {
-      await applyImageToProduct(
-        productId,
-        parseInt(variantId),
-        uploaded.id,
-        position
-      );
-    }
+   // 3. Poll for mockups (Printify needs a few seconds)
+let product;
+for (let attempt = 1; attempt <= 10; attempt++) {
+  product = await fetchProduct(productId);
+  const ready = Array.isArray(product?.images) && product.images.some(i => i?.src);
+  if (ready) break;
+  await new Promise(r => setTimeout(r, 1200)); // ~12s max
+}
 
-    // 3. Poll for mockups (Printify needs a few seconds)
-    let product;
-    for (let attempt = 1; attempt <= 10; attempt++) {
-      product = await fetchProduct(productId);
-      const ready = Array.isArray(product?.images) && product.images.some(i => i?.src);
-      if (ready) break;
-      await new Promise(r => setTimeout(r, 1200)); // ~12s max
-    }
+res.json({ success: true, uploadedImage: uploaded, product });
 
-    res.json({ success: true, uploadedImage: uploaded, product });
   } catch (err) {
     console.error("❌ Preview generation failed:", err.message);
     res.status(500).json({ error: err.message });
@@ -856,7 +817,7 @@ async function transformProducts(printifyData, shopifyData) {
 
       const variant = variantRes?.variants?.find(v => v.id === p.variants[0]?.id);
       console.log('Variant object for', p.title, JSON.stringify(variant, null, 2));
-      const area = variant?.placeholders?.find(pp => pp.position === 'front');
+      const area = variant?.placeholders?.find(p => p.position === 'front');
       console.log('Fetched print area for:', p.title, area);
 
       if (area) {
@@ -1360,4 +1321,3 @@ app.get('/debug/paid-puzzles', (req, res) => {
 });
 
 export default app;
-
