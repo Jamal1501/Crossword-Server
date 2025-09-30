@@ -523,8 +523,7 @@ app.get('/apps/crossword/products', async (req, res) => {
   try {
     const DEFAULT_AREA = { width: 800, height: 500, top: 50, left: 50 };
 
-    // Default placement tweaks the editor can use if nothing else is set.
-    // Normalized offsets: 0.01 ≈ 1% of the print area.
+    // Editor default tweaks (normalized offsets)
     const DEFAULT_PLACEMENT = {
       front: { scaleMul: 0.85, xAdd: 0.00, yAdd: -0.02, angle: 0 },
       back:  { scaleMul: 0.85, xAdd: 0.00, yAdd: -0.02, angle: 0 }
@@ -561,54 +560,69 @@ app.get('/apps/crossword/products', async (req, res) => {
     }
 
     const out = [];
+
     for (const p of shopifyProducts) {
       if (!['active', 'draft'].includes(p.status)) continue;
 
-      // Prefer a Shopify variant we actually mapped to Printify; else take first
-      const mappedIds = new Set(Object.keys(variantMap));
-      const preferred = p.variants.find(v => mappedIds.has(String(v.id))) || p.variants[0];
-      if (!preferred) continue;
-
-      const shopifyPreferredVariantId = String(preferred.id);
-      const printifyVariantId = variantMap[shopifyPreferredVariantId] || null;
       const imageById = new Map();
       (p.images || []).forEach(im => imageById.set(im.id, im.src));
       const heroImg = p.image?.src || p.images?.[0]?.src || '';
 
-      // Build per-variant list restricted to mapped variants (orderable)
-      const variantList = (Array.isArray(p.variants) ? p.variants : [])
-        .filter(v => mappedIds.has(String(v.id)))
-        .map(v => ({
-          title: v.title || [v.option1, v.option2, v.option3].filter(Boolean).join(' / '),
-          shopifyVariantId: String(v.id),
-          printifyVariantId: variantMap[String(v.id)] || null,
-          price: parseFloat(v.price) || 0,
-          options: { option1: v.option1, option2: v.option2, option3: v.option3 },
-          printArea: printAreas[String(v.id)] || DEFAULT_AREA,
-          image: imageById.get(v.image_id) || heroImg
-        }));
+      const mappedIds = new Set(Object.keys(variantMap)); // Shopify variant ids that map to Printify
 
-      // Full variant list (for disabled UI states, etc.)
-      const allVariantList = (Array.isArray(p.variants) ? p.variants : [])
-        .map(v => ({
-          title: v.title || [v.option1, v.option2, v.option3].filter(Boolean).join(' / '),
-          shopifyVariantId: String(v.id),
-          printifyVariantId: variantMap[String(v.id)] || null,
-          price: parseFloat(v.price) || 0,
-          options: { option1: v.option1, option2: v.option2, option3: v.option3 },
-          printArea: printAreas[String(v.id)] || DEFAULT_AREA,
-          image: imageById.get(v.image_id) || heroImg
-        }));
+      // Only variants that we can actually fulfill (mapped to Printify)
+      const orderableVariants = (Array.isArray(p.variants) ? p.variants : [])
+        .filter(v => mappedIds.has(String(v.id)));
 
-      // Resolve the Printify productId & live print area (from catalog placeholders)
+      // If no mapped variants, skip product
+      if (!orderableVariants.length) continue;
+
+      // Build per-variant objects
+      const variantList = orderableVariants.map(v => ({
+        title: v.title || [v.option1, v.option2, v.option3].filter(Boolean).join(' / '),
+        shopifyVariantId: String(v.id),
+        printifyVariantId: variantMap[String(v.id)] || null,
+        price: parseFloat(v.price) || 0,
+        options: { option1: v.option1, option2: v.option2, option3: v.option3 },
+        image: imageById.get(v.image_id) || heroImg
+      }));
+
+      // Determine default (first orderable) variant
+      const defaultVariant = variantList[0];
+      const printifyVariantId = defaultVariant.printifyVariantId;
       const printifyProductId = printifyVariantId ? (pifyVariantToProduct.get(printifyVariantId) || null) : null;
+
+      // Compute which options actually vary across orderable variants
+      const rawOptions = Array.isArray(p.options) ? p.options : [];
+      // Collect distinct values per option index
+      const distinct = { option1: new Set(), option2: new Set(), option3: new Set() };
+      for (const v of orderableVariants) {
+        if (v.option1) distinct.option1.add(v.option1);
+        if (v.option2) distinct.option2.add(v.option2);
+        if (v.option3) distinct.option3.add(v.option3);
+      }
+
+      // Only include options that have >1 unique value
+      const optionSchemas = [];
+      rawOptions.forEach((opt, idx) => {
+        const key = `option${idx + 1}`;
+        const values = Array.from(distinct[key] || []);
+        if (values.length > 1) {
+          optionSchemas.push({
+            name: (opt.name || '').toLowerCase(),  // e.g., 'size', 'color'
+            position: idx + 1,                     // 1..3
+            values                                // distinct values (strings)
+          });
+        }
+      });
+
+      // Resolve live print area from catalog (front), detect back availability
       let liveArea = null;
       let hasBack = false;
 
       if (printifyProductId && printifyVariantId) {
         const prodMeta = pifyArray.find(pr => pr.id === printifyProductId);
         if (prodMeta) {
-          // blueprint + print provider defines the placeholder geometry
           const variantsRes = await safeFetch(
             `https://api.printify.com/v1/catalog/blueprints/${prodMeta.blueprint_id}/print_providers/${prodMeta.print_provider_id}/variants.json`,
             {
@@ -623,13 +637,11 @@ app.get('/apps/crossword/products', async (req, res) => {
             ? variantsRes.variants.find(v => v.id === printifyVariantId)
             : null;
 
-          // Prefer 'front' placeholder for preview; also detect if 'back' exists
           const phFront = vMeta?.placeholders?.find(ph => ph.position === 'front');
           const phBack  = vMeta?.placeholders?.find(ph => ph.position === 'back');
           hasBack = !!phBack;
 
           if (phFront?.width && phFront?.height) {
-            // Some catalogs include top/left
             liveArea = {
               width: phFront.width,
               height: phFront.height,
@@ -640,31 +652,29 @@ app.get('/apps/crossword/products', async (req, res) => {
         }
       }
 
-      const optionNames = Array.isArray(p.options)
-        ? p.options.map(o => (o.name || '').toLowerCase())
-        : [];
-
       out.push({
-        // IDs
+        // Product metadata
         shopifyProductId: String(p.id),
-        shopifyVariantId: shopifyPreferredVariantId,
-        productId: printifyProductId,        // Printify product ID (used by preview/apply)
-        printifyProductId,                   // explicit duplicate for clarity
-        variantId: preferred?.id || null,    // Shopify numeric variant ID (legacy)
-        printifyVariantId,                   // chosen Printify variant
-        // Meta
         title: p.title,
         handle: p.handle || '',
-        optionNames,
-        price: parseFloat(preferred?.price) || 0,
         image: heroImg,
-        // Geometry + defaults
-        printArea: liveArea || printAreas[shopifyPreferredVariantId] || DEFAULT_AREA,
-        placementDefaults: DEFAULT_PLACEMENT,   // <— editor can use these to set x/y/scale
-        hasBack,                                // UI may enable "back" preview
-        // Variants
+
+        // Default variant (use THIS per product when nothing is selected)
+        defaultShopifyVariantId: defaultVariant.shopifyVariantId,
+        defaultPrice: defaultVariant.price,
+
+        // Variants you can choose from for THIS product
         variants: variantList,
-        allVariants: allVariantList
+
+        // Only render selectors for these options
+        optionSchemas, // e.g., [{ name: 'size', position: 1, values: ['S','M','L'] }]
+
+        // Geometry + defaults for the editor
+        printifyProductId,
+        printifyVariantId,
+        printArea: liveArea || (printAreas[defaultVariant.shopifyVariantId] || DEFAULT_AREA),
+        placementDefaults: DEFAULT_PLACEMENT,
+        hasBack
       });
     }
 
@@ -674,6 +684,7 @@ app.get('/apps/crossword/products', async (req, res) => {
     res.status(500).json({ error: 'Failed to load products', details: err.message });
   }
 });
+
 
 // LEGACY preview endpoint
 app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
