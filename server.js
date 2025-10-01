@@ -618,26 +618,58 @@ app.get('/apps/crossword/products', async (req, res) => {
       const printifyProductId = printifyVariantId ? (pifyVariantToProduct.get(printifyVariantId) || null) : null;
       // Fetch live placeholder for this Printify variant (front)
       let liveArea = null;
-      if (printifyProductId && printifyVariantId) {
-        const prodMeta = pifyArray.find(pr => pr.id === printifyProductId);
-        if (prodMeta) {
-          const variantsRes = await safeFetch(
-            `https://api.printify.com/v1/catalog/blueprints/${prodMeta.blueprint_id}/print_providers/${prodMeta.print_provider_id}/variants.json`,
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-            }
-          );
-          const vMeta = variantsRes?.variants?.find(v => v.id === printifyVariantId);
-          const ph = vMeta?.placeholders?.find(ph => ph.position === 'front');
-
-          if (ph?.width && ph?.height) {
-            liveArea = { width: ph.width, height: ph.height, top: ph.top || 0, left: ph.left || 0 };
-          }
-        }
+if (printifyProductId && printifyVariantId) {
+  const prodMeta = pifyArray.find(pr => pr.id === printifyProductId);
+  if (prodMeta) {
+    const variantsRes = await safeFetch(
+      `https://api.printify.com/v1/catalog/blueprints/${prodMeta.blueprint_id}/print_providers/${prodMeta.print_provider_id}/variants.json`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
       }
+    );
+    const vMeta = variantsRes?.variants?.find(v => v.id === printifyVariantId);
+    const ph = vMeta?.placeholders?.find(ph => ph.position === 'front');
+
+    if (ph?.width && ph?.height) {
+      liveArea = { width: ph.width, height: ph.height, top: ph.top || 0, left: ph.left || 0 };
+    }
+  }
+}
+
+      if (printifyProductId && printifyVariantId) {
+  const prodMeta = pifyArray.find(pr => pr.id === printifyProductId);
+
+  // Guard: ignore products missing sane blueprint/provider
+  const bp = Number(prodMeta?.blueprint_id);
+  const pp = Number(prodMeta?.print_provider_id);
+  if (prodMeta && Number.isFinite(bp) && Number.isFinite(pp)) {
+    try {
+      const variantsRes = await safeFetch(
+        `https://api.printify.com/v1/catalog/blueprints/${bp}/print_providers/${pp}/variants.json`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      const vMeta = variantsRes?.variants?.find(v => v.id === printifyVariantId);
+      const ph = vMeta?.placeholders?.find(ph => ph.position === 'front');
+      if (ph?.width && ph?.height) {
+        liveArea = { width: ph.width, height: ph.height, top: ph.top || 0, left: ph.left || 0 };
+      }
+    } catch (e) {
+      console.warn(
+        `⚠️ Skipping live placeholder fetch for product ${prodMeta?.title || prodMeta?.id} (blueprint ${bp}, provider ${pp}): ${e.message}`
+      );
+      // fall through → keep liveArea as null and use stored/default print area
+    }
+  }
+}
+
           const optionNames = Array.isArray(p.options)
   ? p.options.map(o => (o.name || '').toLowerCase())
   : [];
