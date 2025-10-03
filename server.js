@@ -1309,6 +1309,26 @@ app.get('/apps/crossword/download-pdf', async (req, res) => {
   }
 });
 
+// debug
+app.get('/apps/crossword/debug/variant/:variantId/live', async (req, res) => {
+  try {
+    const variantId = Number(req.params.variantId);
+    const products = await fetchAllProductsPagedFiltered(); // ← filtered version
+    const matched = products.find(p => p?.variants?.some(v => v.id === variantId));
+    if (!matched) return res.status(404).json({ ok:false, message:`Variant ${variantId} not found among visible products`, total: products.length });
+    res.json({
+      ok: true,
+      variant_id: variantId,
+      product_id: matched.id,
+      title: matched.title,
+      visible: matched.visible,
+      is_locked: matched.is_locked,
+      blueprint_id: matched.blueprint_id,
+      print_provider_id: matched.print_provider_id
+    });
+  } catch (e) { res.status(500).json({ ok:false, error: e.message }); }
+});
+
 // Debug endpoint
 app.get('/__echo', (req, res) => {
   res.json({ ok: true, path: req.path, query: req.query });
