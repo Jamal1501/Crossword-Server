@@ -308,38 +308,61 @@ export async function createOrder({
     console.warn('⚠️ Contain-scale calc failed (front):', e.message);
   }
 
-  // 5) Build print_areas with FRONT (+ optional BACK)
-  const printAreas = {
-    front: [{
-      image_url: (uploadedFront.file_url || uploadedFront.preview_url),
-      x: position?.x ?? 0.5,
-      y: position?.y ?? 0.5,
-      scale: finalScale,
-      angle: position?.angle ?? 0
-    }]
-  };
+// 5) Build print_areas with FRONT (+ optional BACK)
+const frontSrc =
+  uploadedFront?.file_url ||
+  uploadedFront?.preview_url ||
+  uploadedFront?.url ||                    // extra safety: some libs return `url`
+  uploadedFront;                           // last resort if helper already returned a string
 
-  if (uploadedBack) {
-    let backKey = 'back';
-    try {
-      const names = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
-      if (!names.includes('back')) {
-        const alt = names.find(n => (n || '').toLowerCase() !== 'front');
-        if (alt) backKey = alt;
-      }
-      console.log('🔎 Using back placeholder key:', backKey);
-    } catch {
-      // keep 'back'
+const printAreas = {
+  front: [{
+    // ✅ REQUIRED by Printify for advanced positioning
+    src: frontSrc,
+
+    // 👇 keep your original field for backwards-compat / debugging
+    image_url: frontSrc,
+
+    x: position?.x ?? 0.5,
+    y: position?.y ?? 0.5,
+    scale: finalScale,
+    angle: position?.angle ?? 0
+  }]
+};
+
+if (uploadedBack) {
+  const backSrc =
+    uploadedBack?.file_url ||
+    uploadedBack?.preview_url ||
+    uploadedBack?.url ||
+    uploadedBack;
+
+  let backKey = 'back';
+  try {
+    const names = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
+    if (!names.includes('back')) {
+      const alt = names.find(n => (n || '').toLowerCase() !== 'front');
+      if (alt) backKey = alt; // dynamic placeholder name (e.g. "right", "left", "main", etc.)
     }
-
-    printAreas[backKey] = [{
-      image_url: (uploadedBack.file_url || uploadedBack.preview_url),
-      x: 0.5,
-      y: 0.5,
-      scale: 1,
-      angle: 0
-    }];
+    console.log('🔎 Using back placeholder key:', backKey);
+  } catch {
+    // keep 'back'
   }
+
+  printAreas[backKey] = [{
+    // ✅ REQUIRED
+    src: backSrc,
+
+    // 👇 keep your original
+    image_url: backSrc,
+
+    x: 0.5,
+    y: 0.5,
+    scale: 1,
+    angle: 0
+  }];
+}
+
 
   // 6) Final order payload
   const payload = {
