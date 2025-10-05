@@ -546,7 +546,7 @@ app.get('/apps/crossword/products', async (req, res) => {
   try {
     const DEFAULT_AREA = { width: 800, height: 500, top: 50, left: 50 };
     const DEFAULT_PLACEMENT = {
-      front: { scaleMul: 0.85, xAdd: 0.00, yAdd: -0.02, angle: 0 },
+      front: { scaleMul: 0.65, xAdd: 0.00, yAdd: -0.02, angle: 0 },
       back:  { scaleMul: 0.85, xAdd: 0.00, yAdd: -0.02, angle: 0 }
     };
     const shopifyRes = await fetch(
