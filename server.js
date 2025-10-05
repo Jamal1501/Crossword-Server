@@ -1602,6 +1602,31 @@ app.get('/admin/variant-map/gaps', async (req, res) => {
   }
 });
 
+app.post('/admin/print-areas/sync-defaults', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${process.env.ADMIN_SECRET}`) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const DEFAULT = { width: 1200, height: 1200, top: 0, left: 0 }; // adjust if needed
+    let added = 0;
+
+    for (const key of Object.keys(variantMap)) {
+      if (!printAreas[key]) {
+        printAreas[key] = DEFAULT;
+        added++;
+      }
+    }
+
+    await fs.writeFile(PRINT_AREAS_PATH, JSON.stringify(printAreas, null, 2));
+    res.json({ added, message: 'Synced defaults for missing print areas.' });
+  } catch (err) {
+    console.error('❌ sync-defaults error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ======================== OTHER DEBUG ROUTES =========================
 app.get('/__echo', (req, res) => {
   res.json({ ok: true, path: req.path, query: req.query });
