@@ -1316,7 +1316,7 @@ const EXCLUDE_TITLE_RE = new RegExp(
   'i'
 );
 
-// --- Paged, filtered product fetch ---
+// --- Paged, filtered shop product fetch ---
 async function fetchAllProductsPagedFiltered() {
   const all = [];
   let page = 1;
@@ -1324,14 +1324,14 @@ async function fetchAllProductsPagedFiltered() {
     const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json?page=${page}`;
     const resp = await safeFetch(url, { headers: authHeaders() });
 
-    // Printify sometimes returns {data:[...]} or just [...]
+    // Printify sometimes returns { data:[...] } or just [...]
     const data = Array.isArray(resp?.data) ? resp.data : (Array.isArray(resp) ? resp : []);
     if (!data.length) break;
 
     const cleaned = data.filter(p => {
-      if (ONLY_VISIBLE && p?.visible !== true) return false; // skip unpublished
-      if (p?.is_locked === true) return false;               // skip locked/in-progress
-      if (EXCLUDE_TITLE_RE.test(p?.title || '')) return false; // skip obvious tests
+      if (ONLY_VISIBLE && p?.visible !== true) return false;      // skip unpublished/drafts
+      if (p?.is_locked === true) return false;                    // skip locked/in-progress
+      if (EXCLUDE_TITLE_RE.test(p?.title || '')) return false;    // skip obvious test items
       return true;
     });
 
@@ -1342,16 +1342,113 @@ async function fetchAllProductsPagedFiltered() {
   return all;
 }
 
-// debug
+// --- Verify (blueprint, provider, variant) exists in Catalog ---
+async function verifyCatalogPair(blueprintId, printProviderId, variantId) {
+  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
+  const data = await safeFetch(url, { headers: authHeaders() });
+  const ok = !!data?.variants?.some(v => Number(v.id) === Number(variantId));
+  if (!ok) {
+    throw new Error(`Variant ${variantId} not offered by bp ${blueprintId} / pp ${printProviderId}`);
+  }
+}
+
+// --- Try to read placeholder names (front/back/etc.) ---
+async function getVariantPlaceholderNames(blueprintId, printProviderId) {
+  // NOTE: schema can vary; handle generously.
+  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/print_areas.json`;
+  const data = await safeFetch(url, { headers: authHeaders() });
+
+  const names = new Set();
+
+  const areas = Array.isArray(data?.print_areas) ? data.print_areas
+              : Array.isArray(data) ? data
+              : [];
+
+  for (const area of areas) {
+    const placeholders = area?.placeholders || area?.placeholders_json || area?.placeholdersList || [];
+    for (const ph of placeholders) {
+      const n = (ph?.name || ph)?.toString().trim().toLowerCase();
+      if (n) names.add(n);
+    }
+    // Some responses use area.name directly
+    if (area?.name) names.add(String(area.name).trim().toLowerCase());
+  }
+
+  if (names.size === 0) names.add('front'); // safe fallback
+  return Array.from(names);
+}
+
+// ======================= PRODUCT SPECS ROUTE =========================
+// GET /apps/crossword/product-specs/:variantId
+// Used by the editor to decide if a "back" side exists, and expose IDs.
+app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
+  try {
+    const variantId = Number(req.params.variantId);
+    if (!variantId) return res.status(400).json({ ok: false, message: 'variantId required' });
+
+    const products = await fetchAllProductsPagedFiltered();
+    const product = products.find(p => p?.variants?.some(v => Number(v.id) === variantId));
+
+    if (!product) {
+      return res.status(404).json({
+        ok: false,
+        message: `Variant ${variantId} not found among visible products`,
+        scanned: products.length
+      });
+    }
+
+    const bp = Number(product.blueprint_id);
+    const pp = Number(product.print_provider_id);
+
+    // Hard guard against junk blueprint ids
+    if (!bp || String(bp).length < 3 || bp === 1111 || bp === 11111) {
+      return res.status(404).json({
+        ok: false,
+        message: `Blueprint looks invalid (${bp}) for product "${product.title}"`
+      });
+    }
+
+    // Confirm the trio actually exists in Catalog
+    await verifyCatalogPair(bp, pp, variantId);
+
+    // Try to discover placeholder names; fallback to ["front"]
+    let placeholders = ['front'];
+    try {
+      placeholders = await getVariantPlaceholderNames(bp, pp);
+    } catch (e) {
+      // keep fallback and continue
+    }
+
+    const hasBack = placeholders.some(n => /back|rear|reverse|backside|secondary|alt/.test(n));
+
+    return res.json({
+      ok: true,
+      variant_id: variantId,
+      product_id: product.id,
+      title: product.title,
+      visible: product.visible,
+      is_locked: product.is_locked,
+      blueprint_id: bp,
+      print_provider_id: pp,
+      placeholders,
+      has_back: !!hasBack
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ======================= DEBUG: VARIANT LIVE =========================
+// e.g. GET /apps/crossword/debug/variant/105129/live
 app.get('/apps/crossword/debug/variant/:variantId/live', async (req, res) => {
   try {
     const variantId = Number(req.params.variantId);
     const products = await fetchAllProductsPagedFiltered();
-    const matched = products.find(p => p?.variants?.some(v => v.id === variantId));
+    const matched = products.find(p => p?.variants?.some(v => Number(v.id) === variantId));
     if (!matched) {
       return res.status(404).json({
-        ok:false,
-        message:`Variant ${variantId} not found among visible products`,
+        ok: false,
+        message: `Variant ${variantId} not found among visible products`,
         total: products.length
       });
     }
@@ -1365,16 +1462,16 @@ app.get('/apps/crossword/debug/variant/:variantId/live', async (req, res) => {
       blueprint_id: matched.blueprint_id,
       print_provider_id: matched.print_provider_id
     });
-  } catch (e) { res.status(500).json({ ok:false, error: e.message }); }
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
-
-// Debug endpoint
+// ======================== OTHER DEBUG ROUTES =========================
 app.get('/__echo', (req, res) => {
   res.json({ ok: true, path: req.path, query: req.query });
 });
 
-// Debug endpoint to check registered purchases
 app.get('/debug/paid-puzzles', (req, res) => {
   const puzzles = Array.from(PaidPuzzles.entries()).map(([id, data]) => ({
     puzzleId: id,
