@@ -200,14 +200,25 @@ async function lookupPrintifyVariantIdByTitles(shopTitle, variantTitle) {
     return null;
   }
 }
+const shopifyVid = String(item.variant_id);
+let printifyVariantId = variantMap[shopifyVid];
 
-    const shopifyVid = String(item.variant_id);
-    const printifyVariantId = variantMap[shopifyVid];
-    if (!printifyVariantId) {
-      console.warn(`⛔ No Printify mapping for Shopify variant ${shopifyVid}. Known keys sample:`,
-        Object.keys(variantMap).slice(0, 10));
-      continue;
-    }
+if (!printifyVariantId) {
+  console.warn(`⛔ No Printify mapping for Shopify variant ${shopifyVid}. Attempting runtime lookup...`,
+               { product: item.title, variant_title: item.variant_title });
+
+  const lookedUp = await lookupPrintifyVariantIdByTitles(item.title, item.variant_title);
+  if (lookedUp) {
+    printifyVariantId = lookedUp;
+    // cache it in memory so subsequent line-items in the same order benefit
+    variantMap[shopifyVid] = lookedUp;
+    console.log('✅ Runtime variant lookup succeeded:', { shopifyVid, printifyVariantId: lookedUp });
+  } else {
+    console.warn('⛔ Still no mapping after runtime lookup. Skipping this line item.', { shopifyVid });
+    continue;
+  }
+}
+
 
     // Optional: per-variant print area (width/height/top/left)
     const area = printAreas?.[shopifyVid] || null;
