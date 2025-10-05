@@ -1253,7 +1253,7 @@ app.get('/apps/crossword/claim-pdf', (req, res) => {
   }
 });
 
-// GET /apps/crossword/download-pdf?puzzleId=...&token=...
+
 app.get('/apps/crossword/download-pdf', async (req, res) => {
   try {
     const { puzzleId, token } = req.query;
@@ -1309,13 +1309,52 @@ app.get('/apps/crossword/download-pdf', async (req, res) => {
   }
 });
 
+// --- Filtering knobs (env-tunable) ---
+const ONLY_VISIBLE = process.env.PRINTIFY_ONLY_VISIBLE !== '0'; // default: true
+const EXCLUDE_TITLE_RE = new RegExp(
+  process.env.PRINTIFY_EXCLUDE_TITLES_REGEX || '(test|desktop|api)',
+  'i'
+);
+
+// --- Paged, filtered product fetch ---
+async function fetchAllProductsPagedFiltered() {
+  const all = [];
+  let page = 1;
+  for (;;) {
+    const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json?page=${page}`;
+    const resp = await safeFetch(url, { headers: authHeaders() });
+
+    // Printify sometimes returns {data:[...]} or just [...]
+    const data = Array.isArray(resp?.data) ? resp.data : (Array.isArray(resp) ? resp : []);
+    if (!data.length) break;
+
+    const cleaned = data.filter(p => {
+      if (ONLY_VISIBLE && p?.visible !== true) return false; // skip unpublished
+      if (p?.is_locked === true) return false;               // skip locked/in-progress
+      if (EXCLUDE_TITLE_RE.test(p?.title || '')) return false; // skip obvious tests
+      return true;
+    });
+
+    all.push(...cleaned);
+    if (!resp?.next_page_url) break;
+    page++;
+  }
+  return all;
+}
+
 // debug
 app.get('/apps/crossword/debug/variant/:variantId/live', async (req, res) => {
   try {
     const variantId = Number(req.params.variantId);
-    const products = await fetchAllProductsPagedFiltered(); // ← filtered version
+    const products = await fetchAllProductsPagedFiltered();
     const matched = products.find(p => p?.variants?.some(v => v.id === variantId));
-    if (!matched) return res.status(404).json({ ok:false, message:`Variant ${variantId} not found among visible products`, total: products.length });
+    if (!matched) {
+      return res.status(404).json({
+        ok:false,
+        message:`Variant ${variantId} not found among visible products`,
+        total: products.length
+      });
+    }
     res.json({
       ok: true,
       variant_id: variantId,
@@ -1328,6 +1367,7 @@ app.get('/apps/crossword/debug/variant/:variantId/live', async (req, res) => {
     });
   } catch (e) { res.status(500).json({ ok:false, error: e.message }); }
 });
+
 
 // Debug endpoint
 app.get('/__echo', (req, res) => {
