@@ -412,6 +412,26 @@ app.post('/api/printify/order', async (req, res) => {
       quantity
     } = req.body;
 
+        // server-side guard against unsupported back printing
+async function serverHasBack(printifyVariantId, req) {
+  try {
+    const base = `${req.protocol}://${req.get('host')}`;
+    const r = await fetch(`${base}/apps/crossword/product-specs/${printifyVariantId}`);
+    if (!r.ok) return false;
+    const data = await r.json();
+    return !!data.has_back;
+  } catch { return false; }
+}
+
+let backUrl = backImageUrl;
+try {
+  const supportsBack = await serverHasBack(variantId, req); // variantId here must be Printify variant id
+  if (!supportsBack) {
+    if (backUrl) console.warn(`Dropping backImage for variant ${variantId} — no back support.`);
+    backUrl = undefined;
+  }
+} catch { backUrl = undefined; }
+
     const { orderId } = req.body;
     console.log('Received orderId:', orderId);
 
@@ -483,6 +503,26 @@ app.post('/save-crossword', cors(corsOptions), async (req, res) => {
 app.post('/api/printify/order-from-url', async (req, res) => {
   try {
     const { cloudinaryUrl, backImageUrl, variantId, position, recipient, quantity } = req.body;
+    // server-side guard against unsupported back printing
+async function serverHasBack(printifyVariantId, req) {
+  try {
+    const base = `${req.protocol}://${req.get('host')}`;
+    const r = await fetch(`${base}/apps/crossword/product-specs/${printifyVariantId}`);
+    if (!r.ok) return false;
+    const data = await r.json();
+    return !!data.has_back;
+  } catch { return false; }
+}
+
+let backUrl = backImageUrl;
+try {
+  const supportsBack = await serverHasBack(variantId, req); // variantId here must be Printify variant id
+  if (!supportsBack) {
+    if (backUrl) console.warn(`Dropping backImage for variant ${variantId} — no back support.`);
+    backUrl = undefined;
+  }
+} catch { backUrl = undefined; }
+
 
     if (!cloudinaryUrl || !variantId || !recipient) {
       return res.status(400).json({ error: 'Missing required fields: cloudinaryUrl, variantId, recipient', success: false });
