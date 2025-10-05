@@ -545,7 +545,10 @@ app.get('/products', async (req, res) => {
 app.get('/apps/crossword/products', async (req, res) => {
   try {
     const DEFAULT_AREA = { width: 800, height: 500, top: 50, left: 50 };
-
+    const DEFAULT_PLACEMENT = {
+      front: { scaleMul: 0.85, xAdd: 0.00, yAdd: -0.02, angle: 0 },
+      back:  { scaleMul: 0.85, xAdd: 0.00, yAdd: -0.02, angle: 0 }
+    };
     const shopifyRes = await fetch(
       `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`,
       { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD, 'Content-Type': 'application/json' } }
