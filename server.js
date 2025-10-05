@@ -1518,6 +1518,43 @@ app.get('/apps/crossword/debug/variant/:variantId/live', async (req, res) => {
   }
 });
 
+// [ADD] List Shopify variants that are missing from variantMap
+app.get('/admin/variant-map/gaps', async (req, res) => {
+  try {
+    const auth = req.headers.authorization;
+    if (auth !== `Bearer ${process.env.ADMIN_SECRET}`) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    // Pull Shopify products (minimal fields)
+    const store = process.env.SHOPIFY_STORE;
+    const pwd   = process.env.SHOPIFY_PASSWORD;
+    const shopUrl = `https://${store}.myshopify.com/admin/api/2024-01/products.json?limit=250&fields=id,title,variants`;
+
+    const resp = await fetch(shopUrl, { headers: { 'X-Shopify-Access-Token': pwd }});
+    const data = await resp.json();
+    const products = Array.isArray(data?.products) ? data.products : [];
+
+    const missing = [];
+    for (const p of products) {
+      for (const v of (p.variants || [])) {
+        const key = String(v.id);
+        if (!variantMap[key]) {
+          missing.push({
+            product_title: p.title,
+            shopify_variant_id: key,
+            shopify_variant_title: v.title
+          });
+        }
+      }
+    }
+    res.json({ missing_count: missing.length, missing });
+  } catch (err) {
+    console.error('❌ variant-map gaps error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ======================== OTHER DEBUG ROUTES =========================
 app.get('/__echo', (req, res) => {
   res.json({ ok: true, path: req.path, query: req.query });
