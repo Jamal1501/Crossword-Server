@@ -3,6 +3,101 @@ import fetch from 'node-fetch';
 
 const BASE_URL = 'https://api.printify.com/v1';
 const { PRINTIFY_API_KEY, PRINTIFY_SHOP_ID } = process.env;
+const SHOP_ID = process.env.PRINTIFY_SHOP_ID;
+const PIFY_HEADERS = {
+  Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+  'Content-Type': 'application/json'
+};
+
+const ONLY_VISIBLE = process.env.PRINTIFY_ONLY_VISIBLE !== '0'; // default true
+const EXCLUDE_TITLE_RE = new RegExp(
+  process.env.PRINTIFY_EXCLUDE_TITLES_REGEX || '(test|desktop|api|quntity|crossword custom order)',
+  'i'
+);
+
+async function fetchAllProductsPagedFiltered() {
+  const all = [];
+  let page = 1;
+  for (;;) {
+    const url = `${BASE_URL}/shops/${SHOP_ID}/products.json?page=${page}`;
+    const resp = await safeFetch(url, { headers: PIFY_HEADERS });
+    const data = Array.isArray(resp?.data) ? resp.data : (Array.isArray(resp) ? resp : []);
+    if (!data.length) break;
+
+    const cleaned = data.filter(p => {
+      if (ONLY_VISIBLE && p?.visible !== true) return false; // skip unpublished/drafts
+      if (p?.is_locked === true) return false;               // skip locked/in-progress
+      if (EXCLUDE_TITLE_RE.test(p?.title || '')) return false; // skip obvious tests
+      return true;
+    });
+
+    all.push(...cleaned);
+    if (!resp?.next_page_url) break;
+    page++;
+  }
+  return all;
+}
+
+const _catalogCache = new Map(); // key `${bp}:${pp}` -> variants payload
+async function fetchCatalogVariants(bp, pp) {
+  const key = `${bp}:${pp}`;
+  if (_catalogCache.has(key)) return _catalogCache.get(key);
+  const url = `${BASE_URL}/catalog/blueprints/${bp}/print_providers/${pp}/variants.json`;
+  const data = await safeFetch(url, { headers: PIFY_HEADERS });
+  _catalogCache.set(key, data);
+  return data;
+}
+
+function looksBogusBlueprint(bp) {
+  const n = Number(bp);
+  return !n || String(n).length < 3 || n === 1111 || n === 11111;
+}
+
+async function providerHasVariant(bp, pp, variantId) {
+  try {
+    const data = await fetchCatalogVariants(bp, pp);
+    return !!data?.variants?.some(v => Number(v.id) === Number(variantId));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a valid (blueprint_id, print_provider_id) for a given catalog variant id.
+ * 1) Try the filtered shop product that actually contains this variant.
+ * 2) If that product is junk (bp invalid or provider doesn’t offer the variant), scan other
+ *    (bp,pp) combos from your filtered products and pick the first that truly offers it.
+ */
+async function resolveBpPpForVariant(variantId) {
+  const products = await fetchAllProductsPagedFiltered();
+
+  // Try direct product that includes this variant
+  for (const p of products) {
+    if (p?.variants?.some(v => Number(v.id) === Number(variantId))) {
+      const bp = Number(p.blueprint_id);
+      const pp = Number(p.print_provider_id);
+      if (!looksBogusBlueprint(bp) && await providerHasVariant(bp, pp, variantId)) {
+        return { blueprintId: bp, printProviderId: pp, product: p };
+      }
+    }
+  }
+
+  // Fallback: scan all (bp,pp) combos from filtered products
+  const combos = [];
+  for (const p of products) {
+    const bp = Number(p.blueprint_id);
+    const pp = Number(p.print_provider_id);
+    if (!looksBogusBlueprint(bp)) combos.push({ bp, pp, p });
+  }
+  for (const c of combos) {
+    if (await providerHasVariant(c.bp, c.pp, variantId)) {
+      return { blueprintId: c.bp, printProviderId: c.pp, product: c.p };
+    }
+  }
+
+  throw new Error(`Unable to resolve a valid blueprint/provider for variant ${variantId} (checked ${products.length} products)`);
+}
+
 
 if (!PRINTIFY_API_KEY || !PRINTIFY_SHOP_ID) {
   throw new Error('Missing PRINTIFY_API_KEY or PRINTIFY_SHOP_ID env vars');
