@@ -1319,13 +1319,21 @@ const EXCLUDE_TITLE_RE = new RegExp(
   'i'
 );
 
+// Local constants for Printify REST calls (avoid BASE_URL/authHeaders())
+const PRINTIFY_BASE = 'https://api.printify.com/v1';
+const SHOP_ID = process.env.PRINTIFY_SHOP_ID;
+const PIFY_HEADERS = {
+  Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
+  'Content-Type': 'application/json',
+};
+
 // --- Paged, filtered shop product fetch ---
 async function fetchAllProductsPagedFiltered() {
   const all = [];
   let page = 1;
   for (;;) {
-    const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json?page=${page}`;
-    const resp = await safeFetch(url, { headers: authHeaders() });
+    const url = `${PRINTIFY_BASE}/shops/${SHOP_ID}/products.json?page=${page}`;
+    const resp = await safeFetch(url, { headers: PIFY_HEADERS });
 
     // Printify sometimes returns { data:[...] } or just [...]
     const data = Array.isArray(resp?.data) ? resp.data : (Array.isArray(resp) ? resp : []);
@@ -1347,8 +1355,8 @@ async function fetchAllProductsPagedFiltered() {
 
 // --- Verify (blueprint, provider, variant) exists in Catalog ---
 async function verifyCatalogPair(blueprintId, printProviderId, variantId) {
-  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
-  const data = await safeFetch(url, { headers: authHeaders() });
+  const url = `${PRINTIFY_BASE}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
+  const data = await safeFetch(url, { headers: PIFY_HEADERS });
   const ok = !!data?.variants?.some(v => Number(v.id) === Number(variantId));
   if (!ok) {
     throw new Error(`Variant ${variantId} not offered by bp ${blueprintId} / pp ${printProviderId}`);
@@ -1357,12 +1365,10 @@ async function verifyCatalogPair(blueprintId, printProviderId, variantId) {
 
 // --- Try to read placeholder names (front/back/etc.) ---
 async function getVariantPlaceholderNames(blueprintId, printProviderId) {
-  // NOTE: schema can vary; handle generously.
-  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/print_areas.json`;
-  const data = await safeFetch(url, { headers: authHeaders() });
+  const url = `${PRINTIFY_BASE}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/print_areas.json`;
+  const data = await safeFetch(url, { headers: PIFY_HEADERS });
 
   const names = new Set();
-
   const areas = Array.isArray(data?.print_areas) ? data.print_areas
               : Array.isArray(data) ? data
               : [];
@@ -1373,13 +1379,13 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId) {
       const n = (ph?.name || ph)?.toString().trim().toLowerCase();
       if (n) names.add(n);
     }
-    // Some responses use area.name directly
     if (area?.name) names.add(String(area.name).trim().toLowerCase());
   }
 
   if (names.size === 0) names.add('front'); // safe fallback
   return Array.from(names);
 }
+
 
 // ======================= PRODUCT SPECS ROUTE =========================
 // GET /apps/crossword/product-specs/:variantId
