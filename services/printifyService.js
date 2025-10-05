@@ -345,83 +345,28 @@ export async function createOrder({
     }
   }
 
-// 3) Resolve product / provider / blueprint for this variant (filtered, minimal change)
-console.log('🔍 Fetching all Printify products...');
-let products;
+// 3) Resolve product / provider / blueprint for this variant (single source of truth)
+console.log('🔍 Resolving (blueprint, provider) for variant via paged + filtered products…');
+
+let product, printProviderId, blueprintId;
 try {
-  const shopProductsUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
-  const response = await safeFetch(shopProductsUrl, { headers: authHeaders() });
-  products = Array.isArray(response?.data) ? response.data : (Array.isArray(response) ? response : []);
-  if (!Array.isArray(products)) throw new Error('Not an array');
-  console.log(`✅ Found ${products.length} Printify products.`);
-} catch (fetchErr) {
-  console.error('❌ Failed to fetch Printify products:', fetchErr.message);
-  throw fetchErr;
+  const { product: matchedProduct, blueprintId: bp, printProviderId: pp } =
+    await resolveBpPpForVariant(variantId);
+
+  product = matchedProduct;
+  blueprintId = bp;
+  printProviderId = pp;
+
+  console.log(`✅ Matched variant ${variantId} to product:`, {
+    title: product?.title,
+    blueprintId,
+    printProviderId
+  });
+} catch (e) {
+  console.error('❌ Unable to resolve (bp,pp) for variant', variantId, e.message);
+  throw e;
 }
 
-// local, function-scoped filters (no globals needed)
-const ONLY_VISIBLE = process.env.PRINTIFY_ONLY_VISIBLE !== '0'; // default true
-const EXCLUDE_TITLE_RE = new RegExp(
-  process.env.PRINTIFY_EXCLUDE_TITLES_REGEX || '(test|desktop|api|quntity|crossword custom order)',
-  'i'
-);
-const validBlueprint = (bp) => {
-  const n = Number(bp);
-  return Number.isFinite(n) && String(n).length >= 3 && n !== 1111 && n !== 11111;
-};
-
-// prefer sane products (visible, not locked, not "test", valid blueprint)
-const filtered = products.filter(p => {
-  if (ONLY_VISIBLE && p?.visible !== true) return false;
-  if (p?.is_locked === true) return false;
-  if (EXCLUDE_TITLE_RE.test(p?.title || '')) return false;
-  if (!validBlueprint(p?.blueprint_id)) return false;
-  return true;
-});
-
-// helper to find the first product that really contains the variant
-const findMatch = (arr) => {
-  for (const p of arr) {
-    if (p?.variants?.some(v => Number(v.id) === Number(variantId))) return p;
-  }
-  return null;
-};
-
-let product = null;
-let printProviderId = null;
-let blueprintId = null;
-
-// try filtered set first, then fall back to the raw list (last resort)
-product = findMatch(filtered) || findMatch(products);
-
-if (!product) {
-  console.error('❌ Could not resolve print_provider_id or blueprint_id for variant:', variantId);
-  console.log('🧪 Scanned variants:', products.flatMap(p => (p.variants || []).map(v => v.id)));
-  throw new Error(`Unable to resolve print_provider_id or blueprint_id for variant ${variantId}`);
-}
-
-printProviderId = product.print_provider_id;
-blueprintId = product.blueprint_id;
-console.log(`✅ Matched variant ${variantId} to product:`, {
-  title: product.title,
-  blueprintId,
-  printProviderId
-});
-
-// if somehow the matched product still has a bogus blueprint, try to switch to a valid one
-if (!validBlueprint(blueprintId)) {
-  const alt = filtered.find(p => p?.variants?.some(v => Number(v.id) === Number(variantId)) && validBlueprint(p.blueprint_id));
-  if (alt) {
-    product = alt;
-    printProviderId = alt.print_provider_id;
-    blueprintId = alt.blueprint_id;
-    console.log(`✅ Switched to valid product for variant ${variantId}:`, {
-      title: product.title, blueprintId, printProviderId
-    });
-  } else {
-    console.warn(`⚠️ Variant ${variantId} matched a product with invalid blueprint (${blueprintId}). Continuing may cause 404/6002.`);
-  }
-}
 
 
   // 4) Contain-fit scale for FRONT (avoid clipping)
