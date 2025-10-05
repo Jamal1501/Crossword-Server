@@ -345,19 +345,27 @@ export async function createOrder({
     }
   }
 
-  // 3) Resolve product / provider / blueprint for this variant
-  console.log('🔍 Fetching all Printify products...');
-  let products;
-  try {
-    const shopProductsUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products.json`;
-    const response = await safeFetch(shopProductsUrl, { headers: authHeaders() });
-    products = Array.isArray(response.data) ? response.data : response;
-    if (!Array.isArray(products)) throw new Error('Not an array');
-    console.log(`✅ Found ${products.length} Printify products.`);
-  } catch (fetchErr) {
-    console.error('❌ Failed to fetch Printify products:', fetchErr.message);
-    throw fetchErr;
-  }
+// 3) Resolve product / provider / blueprint for this variant (robust)
+console.log('🔍 Resolving (blueprint, provider) for variant via paged + filtered products…');
+let product = null;
+let printProviderId = null;
+let blueprintId = null;
+
+try {
+  const resolved = await resolveBpPpForVariant(parseInt(variantId));
+  product = resolved.product;
+  printProviderId = resolved.printProviderId;
+  blueprintId = resolved.blueprintId;
+  console.log(`✅ Matched variant ${variantId} to product:`, {
+    title: product?.title,
+    blueprintId,
+    printProviderId
+  });
+} catch (fetchErr) {
+  console.error('❌ Could not resolve (bp, pp) for variant:', variantId, fetchErr.message);
+  throw fetchErr;
+}
+
 
   let product = null;
   let printProviderId = null;
