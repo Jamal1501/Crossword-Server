@@ -165,6 +165,42 @@ async function handlePrintifyOrder(order) {
       continue;
     }
 
+    // [ADD] Emergency lookup when variantMap misses something
+async function lookupPrintifyVariantIdByTitles(shopTitle, variantTitle) {
+  try {
+    const shopId = process.env.PRINTIFY_SHOP_ID;
+    let page = 1, all = [];
+    // very light pagination (adjust if you have many)
+    for (; page <= 5; page++) {
+      const url = `https://api.printify.com/v1/shops/${shopId}/products.json?page=${page}&limit=100`;
+      const data = await safeFetch(url, { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` }});
+      const arr = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+      if (!arr.length) break;
+      all = all.concat(arr);
+      if (arr.length < 100) break;
+    }
+
+    const norm = s => String(s||'').trim().toLowerCase();
+    const t  = norm(shopTitle);
+    const vt = norm(variantTitle || '');
+
+    const p = all.find(p => norm(p.title) === t) ||
+              all.find(p => norm(p.title).includes(t)) ||
+              null;
+    if (!p) return null;
+
+    const pv = (p.variants || []);
+    // try exact variant title first
+    let v = pv.find(x => norm(x.title) === vt);
+    if (!v && pv.length === 1) v = pv[0];
+    if (!v && vt) v = pv.find(x => norm(x.title).includes(vt));
+    return v ? v.id : null;
+  } catch (e) {
+    console.warn('lookupPrintifyVariantIdByTitles failed:', e.message);
+    return null;
+  }
+}
+
     const shopifyVid = String(item.variant_id);
     const printifyVariantId = variantMap[shopifyVid];
     if (!printifyVariantId) {
