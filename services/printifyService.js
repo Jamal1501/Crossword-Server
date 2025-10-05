@@ -367,10 +367,6 @@ try {
 }
 
 
-  let product = null;
-  let printProviderId = null;
-  let blueprintId = null;
-
   for (const p of products) {
     const variant = p.variants?.find(v => v.id === parseInt(variantId));
     if (variant) {
