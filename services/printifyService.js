@@ -388,21 +388,30 @@ try {
     console.warn('⚠️ Contain-scale calc failed (front):', e.message);
   }
 
-// 5) Build print_areas with FRONT (+ optional BACK)
+// 5) Build print_areas from REQUIRED placeholders
 const frontSrc =
   uploadedFront?.file_url ||
   uploadedFront?.preview_url ||
-  uploadedFront?.url ||                    // extra safety: some libs return `url`
-  uploadedFront;                           // last resort if helper already returned a string
+  uploadedFront?.url ||
+  uploadedFront; // last resort if helper already returned a string
 
+// discover which placeholders this variant requires (e.g. ["front","front_cover"])
+let requiredPlaceholders = ['front'];
+try {
+  requiredPlaceholders = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
+  if (!Array.isArray(requiredPlaceholders) || requiredPlaceholders.length === 0) {
+    requiredPlaceholders = ['front'];
+  }
+} catch (e) {
+  requiredPlaceholders = ['front'];
+}
+
+// always include FRONT
 const printAreas = {
   front: [{
-    // ✅ REQUIRED by Printify for advanced positioning
     src: frontSrc,
-
-    // 👇 keep your original field for backwards-compat / debugging
     image_url: frontSrc,
-
+    position: "front",
     x: position?.x ?? 0.5,
     y: position?.y ?? 0.5,
     scale: finalScale,
@@ -410,6 +419,20 @@ const printAreas = {
   }]
 };
 
+// if the blueprint demands "front_cover", duplicate front to satisfy validation
+if (requiredPlaceholders.includes('front_cover')) {
+  printAreas.front_cover = [{
+    src: frontSrc,
+    image_url: frontSrc,
+    position: "front_cover",
+    x: position?.x ?? 0.5,
+    y: position?.y ?? 0.5,
+    scale: finalScale,
+    angle: position?.angle ?? 0
+  }];
+}
+
+// include a back/alt placeholder ONLY if you actually have a back image
 if (uploadedBack) {
   const backSrc =
     uploadedBack?.file_url ||
@@ -417,31 +440,21 @@ if (uploadedBack) {
     uploadedBack?.url ||
     uploadedBack;
 
-  let backKey = 'back';
-  try {
-    const names = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
-    if (!names.includes('back')) {
-      const alt = names.find(n => (n || '').toLowerCase() !== 'front');
-      if (alt) backKey = alt; // dynamic placeholder name (e.g. "right", "left", "main", etc.)
-    }
-    console.log('🔎 Using back placeholder key:', backKey);
-  } catch {
-    // keep 'back'
-  }
+  // prefer "back", otherwise first non-front/cover placeholder name
+  const altKey = requiredPlaceholders.find(n => n !== 'front' && n !== 'front_cover');
+  const backKey = requiredPlaceholders.includes('back') ? 'back' : (altKey || 'back');
 
   printAreas[backKey] = [{
-    // ✅ REQUIRED
     src: backSrc,
-
-    // 👇 keep your original
     image_url: backSrc,
-
+    position: backKey,
     x: 0.5,
     y: 0.5,
     scale: 1,
     angle: 0
   }];
 }
+
 
 
   // 6) Final order payload
