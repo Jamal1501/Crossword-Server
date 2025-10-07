@@ -186,13 +186,13 @@ async function lookupPrintifyVariantIdByTitles(shopTitle, variantTitle) {
     const shopId = process.env.PRINTIFY_SHOP_ID;
     let page = 1, all = [];
     // very light pagination (adjust if you have many)
-    for (; page <= 5; page++) {
-      const url = `https://api.printify.com/v1/shops/${shopId}/products.json?page=${page}&limit=100`;
+    for (; page <= 10; page++) {
+      const url = `https://api.printify.com/v1/shops/${shopId}/products.json?page=${page}&limit=50`;
       const data = await safeFetch(url, { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` }});
       const arr = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
       if (!arr.length) break;
       all = all.concat(arr);
-      if (arr.length < 100) break;
+      if (arr.length < 50) break;
     }
 
     const norm = s => String(s||'').trim().toLowerCase();
@@ -306,6 +306,20 @@ app.post('/webhooks/orders/create', async (req, res) => {
     .digest('base64');
 
   if (digest !== hmac) {
+    const hmacHeader = req.headers['x-shopify-hmac-sha256'] || '';
+    const rawBody = req.body; // Buffer (because of bodyParser.raw on this route)
+    
+    const computed = crypto
+   .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
+    .update(rawBody)              // pass Buffer, no encoding
+    .digest();                    // get Buffer
+
+  const received = Buffer.from(String(hmacHeader), 'base64');
+  const valid =
+    received.length === computed.length &&
+    crypto.timingSafeEqual(received, computed);
+
+  if (!valid) {
     console.warn('⚠️ Webhook HMAC verification failed.');
     return res.status(401).send('HMAC validation failed');
   }
@@ -313,40 +327,6 @@ app.post('/webhooks/orders/create', async (req, res) => {
   const order = JSON.parse(rawBody.toString());
   console.log('✅ Verified webhook for order:', order.id);
 
-    // [ADD] Record paid puzzleIds and their assets for PDF
-  try {
-    const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
-    const seen = [];
-
-    for (const li of lineItems) {
-      const props = Array.isArray(li.properties) ? li.properties : [];
-      const getProp = (name) => {
-        const p = props.find(x => x && x.name === name);
-        return p ? String(p.value || '') : '';
-      };
-
-      const pid = getProp('_puzzle_id');
-      if (!pid) continue;
-
-      const crosswordImage = getProp('_custom_image');      // from addToCart
-      const cluesImage     = getProp('_clues_image_url');   // always added in 1C
-
-      PaidPuzzles.set(pid, {
-        orderId: String(order.id),
-        email: (order.email || order?.customer?.email || '') + '',
-        crosswordImage,
-        cluesImage,
-        when: new Date().toISOString(),
-      });
-      seen.push(pid);
-    }
-
-    if (seen.length) {
-      console.log('🔐 Stored paid puzzleIds:', seen);
-    }
-  } catch (e) {
-    console.error('❌ Failed to index paid puzzleIds', e);
-  }
 
   // 🚫 prevent duplicate processing across redeploys / retries
   if (processedShopifyOrders.has(order.id)) {
