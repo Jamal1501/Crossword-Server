@@ -106,6 +106,12 @@ app.get('/print-areas', (req, res) => {
   });
 });
 
+app.get('/apps/crossword/postcard-variant-id', async (req, res) => {
+  const id = process.env.POSTCARD_SHOPIFY_VARIANT_ID; // <-- your existing env var
+  if (!id) return res.status(404).json({ ok: false, error: 'Missing POSTCARD_SHOPIFY_VARIANT_ID' });
+  return res.json({ ok: true, variant_id: String(id) });
+});
+
 // Dynamic area route used by the theme
 app.get('/print-area/:variantId', (req, res) => {
   const id = String(req.params.variantId);
