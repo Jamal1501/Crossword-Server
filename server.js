@@ -84,16 +84,17 @@ try {
 
 // ======================= CLIENT CONFIG ROUTE =========================
 // Tells the editor which Shopify variant to use for the postcard bundle item.
+// ======================= CLIENT CONFIG ROUTE =========================
 app.get('/apps/crossword/config', (req, res) => {
-  // Set this in your env as the Shopify VARIANT ID of your postcard product
-  // e.g., POSTCARD_SHOPIFY_VARIANT_ID=53071781429577
-  const postcardVariantId = process.env.POSTCARD_SHOPIFY_VARIANT_ID
-    ? String(process.env.POSTCARD_SHOPIFY_VARIANT_ID)
-    : '';
+  const postcardVariantId = process.env.POSTCARD_SHOPIFY_VARIANT_ID || '';
+  
+  if (!postcardVariantId) {
+    console.warn('⚠️ POSTCARD_SHOPIFY_VARIANT_ID not configured in environment');
+  }
 
   res.json({
     ok: true,
-    postcardVariantId
+    postcardVariantId: postcardVariantId
   });
 });
 
@@ -186,6 +187,39 @@ async function handlePrintifyOrder(order) {
       continue;
     }
 
+    // Resolve Shopify variant ID → Printify variant ID
+app.get('/apps/crossword/resolve-printify-variant/:shopifyVariantId', async (req, res) => {
+  try {
+    const shopifyVid = String(req.params.shopifyVariantId);
+    
+    if (!shopifyVid) {
+      return res.status(400).json({ ok: false, error: 'Missing shopifyVariantId' });
+    }
+
+    // Check in-memory variant map first
+    const printifyVid = variantMap[shopifyVid];
+    
+    if (printifyVid) {
+      return res.json({ 
+        ok: true, 
+        shopify_variant_id: shopifyVid,
+        printify_variant_id: printifyVid 
+      });
+    }
+
+    // Not found in map
+    console.warn(`⚠️ No Printify mapping for Shopify variant ${shopifyVid}`);
+    return res.status(404).json({ 
+      ok: false, 
+      error: 'No Printify mapping found',
+      shopify_variant_id: shopifyVid
+    });
+
+  } catch (err) {
+    console.error('❌ resolve-printify-variant error:', err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
     // [ADD] Emergency lookup when variantMap misses something
 async function lookupPrintifyVariantIdByTitles(shopTitle, variantTitle) {
   try {
@@ -1472,45 +1506,85 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId) {
 // ======================= PRODUCT SPECS ROUTE =========================
 // GET /apps/crossword/product-specs/:variantId
 // Used by the editor to decide if a "back" side exists, and expose IDs.
+// ======================= PRODUCT SPECS ROUTE =========================
 app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
   try {
     const variantId = Number(req.params.variantId);
-    if (!variantId) return res.status(400).json({ ok: false, message: 'variantId required' });
+    
+    if (!variantId || isNaN(variantId)) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: 'Invalid variantId',
+        received: req.params.variantId
+      });
+    }
 
+    console.log(`[product-specs] Looking up variant ${variantId}`);
+
+    // Fetch all products (with filtering)
     const products = await fetchAllProductsPagedFiltered();
-    const product = products.find(p => p?.variants?.some(v => Number(v.id) === variantId));
+    
+    // Find product containing this variant
+    const product = products.find(p => 
+      p?.variants?.some(v => Number(v.id) === variantId)
+    );
 
     if (!product) {
+      console.warn(`⚠️ Variant ${variantId} not found among ${products.length} visible products`);
       return res.status(404).json({
         ok: false,
-        message: `Variant ${variantId} not found among visible products`,
-        scanned: products.length
+        error: `Variant ${variantId} not found`,
+        has_back: false,
+        scanned_products: products.length
       });
     }
 
     const bp = Number(product.blueprint_id);
     const pp = Number(product.print_provider_id);
 
-    // Hard guard against junk blueprint ids
+    // Guard against invalid blueprints
     if (!bp || String(bp).length < 3 || bp === 1111 || bp === 11111) {
-      return res.status(404).json({
-        ok: false,
-        message: `Blueprint looks invalid (${bp}) for product "${product.title}"`
+      console.warn(`⚠️ Invalid blueprint ${bp} for product "${product.title}"`);
+      return res.json({
+        ok: true,
+        variant_id: variantId,
+        product_id: product.id,
+        title: product.title,
+        has_back: false,
+        hasBack: false,
+        error: 'Invalid blueprint'
       });
     }
 
-    // Confirm the trio actually exists in Catalog
-    await verifyCatalogPair(bp, pp, variantId);
+    // Verify variant exists in Printify catalog
+    try {
+      await verifyCatalogPair(bp, pp, variantId);
+    } catch (e) {
+      console.warn(`⚠️ Catalog verification failed for variant ${variantId}:`, e.message);
+      return res.json({
+        ok: true,
+        variant_id: variantId,
+        product_id: product.id,
+        title: product.title,
+        has_back: false,
+        hasBack: false,
+        error: 'Not in catalog'
+      });
+    }
 
-    // Try to discover placeholder names; fallback to ["front"]
+    // Get placeholder names (front, back, etc.)
     let placeholders = ['front'];
     try {
       placeholders = await getVariantPlaceholderNames(bp, pp);
     } catch (e) {
-      // keep fallback and continue
+      console.warn(`⚠️ Could not fetch placeholders for ${variantId}, using fallback`);
     }
 
-    const hasBack = placeholders.some(n => /back|rear|reverse|backside|secondary|alt/.test(n));
+    const hasBack = placeholders.some(n => 
+      /back|rear|reverse|backside|secondary|alt/i.test(n)
+    );
+
+    console.log(`✅ Variant ${variantId} specs: has_back=${hasBack}, placeholders=${placeholders.join(',')}`);
 
     return res.json({
       ok: true,
@@ -1522,11 +1596,17 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
       blueprint_id: bp,
       print_provider_id: pp,
       placeholders,
-      has_back: !!hasBack,
-      hasBack: !!hasBack
+      has_back: hasBack,
+      hasBack: hasBack  // Both formats for compatibility
     });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+
+  } catch (err) {
+    console.error('❌ product-specs error:', err);
+    return res.status(500).json({ 
+      ok: false, 
+      error: err.message,
+      has_back: false
+    });
   }
 });
 
