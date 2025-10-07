@@ -371,13 +371,14 @@ app.post('/webhooks/orders/create', async (req, res) => {
 
   await handlePrintifyOrder(order);
   res.status(200).send('Webhook received');
-});
+};
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+})
+  );
 
 app.post('/admin/generate-variant-map', async (req, res) => {
   try {
