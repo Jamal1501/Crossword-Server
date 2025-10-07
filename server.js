@@ -82,6 +82,21 @@ try {
   console.warn('ℹ️ No print-areas.json at', PRINT_AREAS_PATH, '→ fallback:', err.message);
 }
 
+// ======================= CLIENT CONFIG ROUTE =========================
+// Tells the editor which Shopify variant to use for the postcard bundle item.
+app.get('/apps/crossword/config', (req, res) => {
+  // Set this in your env as the Shopify VARIANT ID of your postcard product
+  // e.g., POSTCARD_SHOPIFY_VARIANT_ID=53071781429577
+  const postcardVariantId = process.env.POSTCARD_SHOPIFY_VARIANT_ID
+    ? String(process.env.POSTCARD_SHOPIFY_VARIANT_ID)
+    : '';
+
+  res.json({
+    ok: true,
+    postcardVariantId
+  });
+});
+
 // Debug route: confirm the server actually loaded your file
 app.get('/print-areas', (req, res) => {
   res.json({
@@ -582,7 +597,7 @@ try {
 
     const order = await createOrder({
       imageUrl: cloudinaryUrl,
-      backImageUrl,          // ✅ pass through
+      backImageUrl: backUrl,        // ✅ pass through
       variantId,
       quantity,
       position,
