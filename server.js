@@ -296,28 +296,20 @@ if (!printifyVariantId) {
   }
 }
 
+
 app.post('/webhooks/orders/create', async (req, res) => {
-  const hmac = req.headers['x-shopify-hmac-sha256'];
+  // req.body is a Buffer because of bodyParser.raw() mounted earlier for this path
   const rawBody = req.body;
+  const hmacHeader = req.headers['x-shopify-hmac-sha256'] || '';
 
-  const digest = crypto
+  // Constant-time HMAC verification
+  const computed = crypto
     .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(rawBody, 'utf8')
-    .digest('base64');
+    .update(rawBody)     // pass Buffer, no encoding
+    .digest();           // Buffer
 
-  if (digest !== hmac) {
-    const hmacHeader = req.headers['x-shopify-hmac-sha256'] || '';
-    const rawBody = req.body; // Buffer (because of bodyParser.raw on this route)
-    
-    const computed = crypto
-   .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(rawBody)              // pass Buffer, no encoding
-    .digest();                    // get Buffer
-
-  const received = Buffer.from(String(hmacHeader), 'base64');
-  const valid =
-    received.length === computed.length &&
-    crypto.timingSafeEqual(received, computed);
+  const received = Buffer.from(hmacHeader, 'base64');
+  const valid = received.length === computed.length && crypto.timingSafeEqual(received, computed);
 
   if (!valid) {
     console.warn('⚠️ Webhook HMAC verification failed.');
@@ -327,14 +319,14 @@ app.post('/webhooks/orders/create', async (req, res) => {
   const order = JSON.parse(rawBody.toString());
   console.log('✅ Verified webhook for order:', order.id);
 
-
-  // 🚫 prevent duplicate processing across redeploys / retries
+  // De-dupe
   if (processedShopifyOrders.has(order.id)) {
     console.log('🛑 Duplicate webhook skipped for order', order.id);
     return res.status(200).send('ok (duplicate ignored)');
   }
   processedShopifyOrders.add(order.id);
-    // [ADD] Record paid puzzleIds and their assets for PDF
+
+  // Index paid puzzleIds once
   try {
     const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
     const seen = [];
@@ -349,8 +341,8 @@ app.post('/webhooks/orders/create', async (req, res) => {
       const pid = getProp('_puzzle_id');
       if (!pid) continue;
 
-      const crosswordImage = getProp('_custom_image');      // from addToCart
-      const cluesImage     = getProp('_clues_image_url');   // we added in A.3
+      const crosswordImage = getProp('_custom_image');
+      const cluesImage     = getProp('_clues_image_url');
 
       PaidPuzzles.set(pid, {
         orderId: String(order.id),
@@ -362,23 +354,22 @@ app.post('/webhooks/orders/create', async (req, res) => {
       seen.push(pid);
     }
 
-    if (seen.length) {
-      console.log('🔐 Stored paid puzzleIds:', seen);
-    }
+    if (seen.length) console.log('🔐 Stored paid puzzleIds:', seen);
   } catch (e) {
     console.error('❌ Failed to index paid puzzleIds', e);
   }
 
   await handlePrintifyOrder(order);
-  res.status(200).send('Webhook received');
-};
+  return res.status(200).send('Webhook received');
+});
 
+// ── Cloudinary config (standalone, not wrapped in extra parens) ────────────────
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
+  api_key:    process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
-})
-  );
+});
+
 
 app.post('/admin/generate-variant-map', async (req, res) => {
   try {
