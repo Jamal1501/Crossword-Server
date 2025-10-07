@@ -517,14 +517,14 @@ try {
     console.log('Creating order with:', {
       hasImageUrl: !!imageUrl,
       hasBase64: !!base64Image,
-      hasBackImage: !!backImageUrl,
+      hasBackImage: !!backUrl,
       variantId,
       recipient: recipient.name
     });
 
     const order = await createOrder({
       imageUrl,
-      backImageUrl,          // ✅ pass through
+      backImageUrl: backUrl,    // ✅ use filtered value
       base64Image,
       variantId,
       quantity,
@@ -1544,7 +1544,8 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
       blueprint_id: bp,
       print_provider_id: pp,
       placeholders,
-      has_back: !!hasBack
+      has_back: !!hasBack,
+      hasBack: !!hasBack
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
