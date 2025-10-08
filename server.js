@@ -98,6 +98,41 @@ app.get('/apps/crossword/config', (req, res) => {
   });
 });
 
+
+    // Resolve Shopify variant ID → Printify variant ID
+app.get('/apps/crossword/resolve-printify-variant/:shopifyVariantId', async (req, res) => {
+  try {
+    const shopifyVid = String(req.params.shopifyVariantId);
+    
+    if (!shopifyVid) {
+      return res.status(400).json({ ok: false, error: 'Missing shopifyVariantId' });
+    }
+
+    // Check in-memory variant map first
+    const printifyVid = variantMap[shopifyVid];
+    
+    if (printifyVid) {
+      return res.json({ 
+        ok: true, 
+        shopify_variant_id: shopifyVid,
+        printify_variant_id: printifyVid 
+      });
+    }
+
+    // Not found in map
+    console.warn(`⚠️ No Printify mapping for Shopify variant ${shopifyVid}`);
+    return res.status(404).json({ 
+      ok: false, 
+      error: 'No Printify mapping found',
+      shopify_variant_id: shopifyVid
+    });
+
+  } catch (err) {
+    console.error('❌ resolve-printify-variant error:', err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // Debug route: confirm the server actually loaded your file
 app.get('/print-areas', (req, res) => {
   res.json({
@@ -187,39 +222,6 @@ async function handlePrintifyOrder(order) {
       continue;
     }
 
-    // Resolve Shopify variant ID → Printify variant ID
-app.get('/apps/crossword/resolve-printify-variant/:shopifyVariantId', async (req, res) => {
-  try {
-    const shopifyVid = String(req.params.shopifyVariantId);
-    
-    if (!shopifyVid) {
-      return res.status(400).json({ ok: false, error: 'Missing shopifyVariantId' });
-    }
-
-    // Check in-memory variant map first
-    const printifyVid = variantMap[shopifyVid];
-    
-    if (printifyVid) {
-      return res.json({ 
-        ok: true, 
-        shopify_variant_id: shopifyVid,
-        printify_variant_id: printifyVid 
-      });
-    }
-
-    // Not found in map
-    console.warn(`⚠️ No Printify mapping for Shopify variant ${shopifyVid}`);
-    return res.status(404).json({ 
-      ok: false, 
-      error: 'No Printify mapping found',
-      shopify_variant_id: shopifyVid
-    });
-
-  } catch (err) {
-    console.error('❌ resolve-printify-variant error:', err);
-    return res.status(500).json({ ok: false, error: err.message });
-  }
-});
     // [ADD] Emergency lookup when variantMap misses something
 async function lookupPrintifyVariantIdByTitles(shopTitle, variantTitle) {
   try {
