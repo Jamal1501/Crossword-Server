@@ -68,8 +68,10 @@ try {
   const json = await fs.readFile('./variant-map.json', 'utf-8');
   variantMap = JSON.parse(json);
   console.log('✅ Loaded variant-map.json with', Object.keys(variantMap).length, 'entries');
+  console.log('📋 Sample mappings:', Object.entries(variantMap).slice(0, 3));
 } catch (err) {
   console.error('❌ Failed to load variant-map.json:', err.message);
+  console.error('⚠️  All variant resolution will fail without this file!');
 }
 
 // --- load print areas ---
