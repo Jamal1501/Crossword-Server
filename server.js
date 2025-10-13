@@ -660,134 +660,79 @@ app.get('/products', async (req, res) => {
   }
 });
 
+// Printify-only product feed (no Shopify Admin; uses variantMap to link back)
 app.get('/apps/crossword/products', async (req, res) => {
   try {
     const DEFAULT_AREA = { width: 800, height: 500, top: 50, left: 50 };
-    const DEFAULT_PLACEMENT = {
-      front: { scaleMul: 0.65, xAdd: 0.00, yAdd: -0.02, angle: 0 },
-      back:  { scaleMul: 0.85, xAdd: 0.00, yAdd: -0.02, angle: 0 }
-    };
 
-    // 1) Shopify products
-    const shopifyRes = await fetch(
-      `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products.json`,
-      { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD, 'Content-Type': 'application/json' } }
-    );
-    if (!shopifyRes.ok) throw new Error(`Shopify API error: ${shopifyRes.status}`);
-    const { products: shopifyProducts } = await shopifyRes.json();
-
-    // 2) Printify products (paged + filtered)
-    const pifyArray = await fetchAllProductsPagedFiltered();
-
-    // Map Printify variantId -> productId (from filtered list)
-    const pifyVariantToProduct = new Map();
-    for (const prod of pifyArray) {
-      for (const v of (prod.variants || [])) {
-        pifyVariantToProduct.set(v.id, prod.id);
-      }
+    // 0) Reverse variantMap: printifyVid -> [shopifyVid...]
+    const rev = {};
+    for (const [shopVid, pifyVid] of Object.entries(variantMap || {})) {
+      const k = String(pifyVid);
+      if (!rev[k]) rev[k] = [];
+      rev[k].push(String(shopVid));
     }
 
+    // 1) Pull visible Printify products
+    const pifyProducts = await fetchAllProductsPagedFiltered();
+
     const out = [];
-    for (const p of shopifyProducts) {
-      if (!['active','draft'].includes(p.status)) continue;
+    for (const p of pifyProducts) {
+      const img = (p.images && p.images[0]?.src) || '';
+      const mappedVariants = (p.variants || []).filter(v => rev[String(v.id)] && rev[String(v.id)][0]);
+      if (!mappedVariants.length) continue; // skip products we can’t sell (no Shopify mapping)
 
-      // prefer a variant we have a mapping for; otherwise take the first variant
-      const mappedIds = new Set(Object.keys(variantMap));
-      const preferred = (p.variants || []).find(v => mappedIds.has(String(v.id))) || (p.variants || [])[0];
-      if (!preferred) continue;
+      // pick a preferred mapped variant
+      const pref = mappedVariants[0];
+      const firstShopifyVid = rev[String(pref.id)][0];
 
-      const shopifyId = String(preferred.id);
-      const printifyVariantId = variantMap[shopifyId] || null;
-
-      const img = p.image?.src || p.images?.[0]?.src || '';
-      const imageById = new Map();
-      (p.images || []).forEach(im => imageById.set(im.id, im.src));
-
-      // Build per-variant list for size/color selection (only mapped)
-      const variantList = (Array.isArray(p.variants) ? p.variants : [])
-        .filter(v => mappedIds.has(String(v.id)))
-        .map(v => ({
-          title: v.title || [v.option1, v.option2, v.option3].filter(Boolean).join(' / '),
-          shopifyVariantId: String(v.id),
-          printifyVariantId: variantMap[String(v.id)] || null,
+      // build UI variants (only mapped)
+      const variantList = mappedVariants.map(v => {
+        const shopVid = rev[String(v.id)][0]; // take the first mapping
+        return {
+          title: v.title || '',
+          shopifyVariantId: shopVid,
+          printifyVariantId: v.id,
           price: parseFloat(v.price) || 0,
-          options: { option1: v.option1, option2: v.option2, option3: v.option3 },
-          printArea: printAreas[String(v.id)] || DEFAULT_AREA
-        }));
+          options: { option1: null, option2: null, option3: null },
+          printArea: printAreas[shopVid] || DEFAULT_AREA
+        };
+      });
 
-      // Full list (even if unmapped) so the UI can disable those combos
-      const allVariantList = (Array.isArray(p.variants) ? p.variants : []).map(v => ({
-        title: v.title || [v.option1, v.option2, v.option3].filter(Boolean).join(' / '),
-        shopifyVariantId: String(v.id),
-        printifyVariantId: variantMap[String(v.id)] || null,
-        price: parseFloat(v.price) || 0,
-        options: { option1: v.option1, option2: v.option2, option3: v.option3 },
-        printArea: printAreas[String(v.id)] || DEFAULT_AREA,
-        image: imageById.get(v.image_id) || img
-      }));
-
-      // Determine associated Printify product (from filtered set) for live placeholder
-      const printifyProductId = printifyVariantId ? (pifyVariantToProduct.get(printifyVariantId) || null) : null;
-
-      // 3) Live placeholder for this variant (front) — resilient
-      let liveArea = null;
-      if (printifyProductId && printifyVariantId) {
-        const prodMeta = pifyArray.find(pr => pr.id === printifyProductId);
-        const bp = Number(prodMeta?.blueprint_id);
-        const pp = Number(prodMeta?.print_provider_id);
-
-        // guard against bogus blueprints (common with test items)
-        if (!bp || String(bp).length < 3 || bp === 1111 || bp === 11111) {
-          console.warn(`⚠️ Skipping live placeholder for product ${prodMeta?.title || prodMeta?.id} (bp ${bp}, pp ${pp}) — invalid blueprint`);
-        } else {
-          try {
-            const variantsRes = await safeFetch(
-              `${PRINTIFY_BASE}/catalog/blueprints/${bp}/print_providers/${pp}/variants.json`,
-              { headers: PIFY_HEADERS }
-            );
-            const vMeta = variantsRes?.variants?.find(v => Number(v.id) === Number(printifyVariantId));
-
-            let ph = null;
-            if (Array.isArray(vMeta?.placeholders)) {
-              ph = vMeta.placeholders.find(ph => (ph.position || ph.name || '').toLowerCase() === 'front')
-                || vMeta.placeholders[0];
-            }
-
-            if (ph?.width && ph?.height) {
-              liveArea = { width: ph.width, height: ph.height, top: ph.top || 0, left: ph.left || 0 };
-            }
-          } catch (e) {
-            console.warn(`⚠️ Skipping live placeholder for product ${prodMeta?.title || prodMeta?.id} (bp ${bp}, pp ${pp}): ${e.message}`);
-            // fall back to print-areas.json / DEFAULT_AREA
-          }
-        }
-      }
-
-      const optionNames = Array.isArray(p.options)
-        ? p.options.map(o => (o.name || '').toLowerCase())
-        : [];
+      // full list for disabling unmapped combos in UI
+      const allVariantList = (p.variants || []).map(v => {
+        const shopVid = (rev[String(v.id)] || [null])[0];
+        return {
+          title: v.title || '',
+          shopifyVariantId: shopVid ? String(shopVid) : '',
+          printifyVariantId: v.id || null,
+          price: parseFloat(v.price) || 0,
+          options: { option1: null, option2: null, option3: null },
+          printArea: shopVid ? (printAreas[String(shopVid)] || DEFAULT_AREA) : DEFAULT_AREA,
+          image: img
+        };
+      });
 
       out.push({
-        // NOTE: this is your Shopify product id; leaving as-is for UI compatibility
-        id: p.id,
-        printifyVariantId,
-        variants: variantList,
+        id: p.id,                          // Printify product id
+        printifyVariantId: pref.id,        // default Printify variant
+        variants: variantList,             // mapped only
         title: p.title,
-        optionNames,
-        handle: p.handle || '',
-        image: img || '',
-        shopifyVariantId: String(preferred?.id || ''),
-        printifyProductId,
-        variantId: preferred?.id || null,
-        price: parseFloat(preferred?.price) || 0,
-        printArea: liveArea || printAreas[String(preferred?.id)] || DEFAULT_AREA,
+        optionNames: [],                   // we don’t have Shopify option names here
+        handle: '',
+        image: img,
+        shopifyVariantId: String(firstShopifyVid || ''),          // preferred Shopify variant
+        printifyProductId: p.id,
+        variantId: firstShopifyVid ? Number(firstShopifyVid) : null,
+        price: parseFloat(pref.price) || 0,
+        printArea: printAreas[String(firstShopifyVid)] || DEFAULT_AREA,
         allVariants: allVariantList
       });
     }
 
     res.json({ products: out });
   } catch (err) {
-    console.error('❌ Failed to load dynamic products:', err);
+    console.error('❌ products(Printify-only) failed:', err);
     res.status(500).json({ error: 'Failed to load products', details: err.message });
   }
 });
