@@ -263,26 +263,24 @@ function verifyAppProxy(req) {
 
 async function handlePrintifyOrder(order) {
   // Flatten useful fields from Shopify line items
-  const items = order.line_items.map((item) => {
-    const props = Array.isArray(item.properties) ? item.properties : [];
-
+    const items = order.line_items.map((li) => {
+    const props = Array.isArray(li.properties) ? li.properties : [];
     const getProp = (name) => {
       const p = props.find(x => x && x.name === name);
       return p ? String(p.value || '') : '';
     };
 
     const custom_image      = getProp('_custom_image');
-    const clues_image_url   = getProp('_clues_image_url');   // 🔹 clues image (if generated)
-    const clue_output_mode  = getProp('_clue_output');       // 🔹 'back' | 'postcard' | 'none'
-
+    const clues_image_url   = getProp('_clues_image_url');   // clues image (if generated)
+    const clue_output_mode  = getProp('_clue_output');       // 'back' | 'postcard' | 'none'
     const design_specs_raw  = getProp('_design_specs');
     const design_specs = design_specs_raw ? (() => { try { return JSON.parse(design_specs_raw); } catch { return null; } })() : null;
 
     return {
-      title: item.title,
-      
-      variant_id: item.variant_id,              // Shopify variant ID
-      quantity: item.quantity || 1,
+      title: li.title,                           // Shopify line item title
+      variant_title: li.variant_title || '',     // <-- add this so logs/lookup are correct
+      variant_id: li.variant_id,                 // Shopify variant ID
+      quantity: li.quantity || 1,
       custom_image,
       clues_image_url,
       clue_output_mode,
@@ -298,41 +296,30 @@ async function handlePrintifyOrder(order) {
       continue;
     }
 
-    // [ADD] Emergency lookup when variantMap misses something
-async function lookupPrintifyVariantIdByTitles(shopTitle, variantTitle) {
-  try {
-    const shopId = process.env.PRINTIFY_SHOP_ID;
-    let page = 1, all = [];
-    // very light pagination (adjust if you have many)
-    for (; page <= 10; page++) {
-      const url = `https://api.printify.com/v1/shops/${shopId}/products.json?page=${page}&limit=50`;
-      const data = await safeFetch(url, { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` }});
-      const arr = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
-      if (!arr.length) break;
-      all = all.concat(arr);
-      if (arr.length < 50) break;
+    const shopifyVid = String(item.variant_id);
+    let printifyVariantId = variantMap[shopifyVid];
+
+    if (!printifyVariantId) {
+      console.warn(`⛔ No Printify mapping for Shopify variant ${shopifyVid}. Attempting runtime lookup...`,
+                   { product: item.title, variant_title: item.variant_title });
+
+      const lookedUp = await lookupPrintifyVariantIdByTitles(item.title, item.variant_title);
+      if (lookedUp) {
+        printifyVariantId = lookedUp;
+        variantMap[shopifyVid] = lookedUp; // cache for this process
+        console.log('✅ Runtime variant lookup succeeded:', { shopifyVid, printifyVariantId: lookedUp });
+        try {
+          await fs.writeFile('./variant-map.json', JSON.stringify(variantMap, null, 2));
+          console.log('📝 Persisted runtime variant map update to variant-map.json');
+        } catch (e) {
+          console.warn('⚠️ Failed to persist variant-map.json:', e.message);
+        }
+      } else {
+        console.warn('⛔ Still no mapping after runtime lookup. Skipping this line item.', { shopifyVid });
+        continue;
+      }
     }
 
-    const norm = s => String(s||'').trim().toLowerCase();
-    const t  = norm(shopTitle);
-    const vt = norm(variantTitle || '');
-
-    const p = all.find(p => norm(p.title) === t) ||
-              all.find(p => norm(p.title).includes(t)) ||
-              null;
-    if (!p) return null;
-
-    const pv = (p.variants || []);
-    // try exact variant title first
-    let v = pv.find(x => norm(x.title) === vt);
-    if (!v && pv.length === 1) v = pv[0];
-    if (!v && vt) v = pv.find(x => norm(x.title).includes(vt));
-    return v ? v.id : null;
-  } catch (e) {
-    console.warn('lookupPrintifyVariantIdByTitles failed:', e.message);
-    return null;
-  }
-}
 const shopifyVid = String(item.variant_id);
 let printifyVariantId = variantMap[shopifyVid];
 
@@ -608,7 +595,7 @@ app.post('/api/printify/order', async (req, res) => {
       quantity
     } = req.body;
 
-        // server-side guard against unsupported back printing
+// server-side guard against unsupported back printing
 
 let backUrl = backImageUrl;
 try {
@@ -618,6 +605,7 @@ try {
     backUrl = undefined;
   }
 } catch { backUrl = undefined; }
+
 
     const { orderId } = req.body;
     console.log('Received orderId:', orderId);
@@ -690,39 +678,28 @@ app.post('/save-crossword', cors(corsOptions), async (req, res) => {
 app.post('/api/printify/order-from-url', async (req, res) => {
   try {
     const { cloudinaryUrl, backImageUrl, variantId, position, recipient, quantity } = req.body;
-    // server-side guard against unsupported back printing
-async function serverHasBack(printifyVariantId, req) {
-  try {
-    const base = `${req.protocol}://${req.get('host')}`;
-    const r = await fetch(`${base}/apps/crossword/product-specs/${printifyVariantId}`);
-    if (!r.ok) return false;
-    const data = await r.json();
-    return !!data.has_back;
-  } catch { return false; }
-}
-
-let backUrl = backImageUrl;
-try {
-  const supportsBack = await serverHasBack(variantId, req); // variantId here must be Printify variant id
-  if (!supportsBack) {
-    if (backUrl) console.warn(`Dropping backImage for variant ${variantId} — no back support.`);
-    backUrl = undefined;
-  }
-} catch { backUrl = undefined; }
-
 
     if (!cloudinaryUrl || !variantId || !recipient) {
       return res.status(400).json({ error: 'Missing required fields: cloudinaryUrl, variantId, recipient', success: false });
     }
 
+    let backUrl = backImageUrl;
+    try {
+      const supportsBack = await serverHasBack(variantId, req); // variantId must be Printify variant id
+      if (!supportsBack) {
+        if (backUrl) console.warn(`Dropping backImage for variant ${variantId} — no back support.`);
+        backUrl = undefined;
+      }
+    } catch { backUrl = undefined; }
+
     console.log('Creating order directly from Cloudinary URL:', {
       cloudinaryUrl,
-      hasBackImage: !!backImageUrl
+      hasBackImage: !!backUrl
     });
 
     const order = await createOrder({
       imageUrl: cloudinaryUrl,
-      backImageUrl: backUrl,        // ✅ pass through
+      backImageUrl: backUrl,
       variantId,
       quantity,
       position,
@@ -735,6 +712,7 @@ try {
     res.status(500).json({ error: 'Order creation failed', details: err.message });
   }
 });
+
 
 
 app.get('/products', async (req, res) => {
@@ -1500,6 +1478,54 @@ const PIFY_HEADERS = {
   Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
   'Content-Type': 'application/json',
 };
+
+// --- Shared helpers -------------------------------------------------
+
+// Check if a Printify variant supports a back print by looking up placeholders
+async function serverHasBack(printifyVariantId, req) {
+  try {
+    const base = `${req.protocol}://${req.get('host')}`;
+    const r = await fetch(`${base}/apps/crossword/product-specs/${printifyVariantId}`);
+    if (!r.ok) return false;
+    const data = await r.json();
+    return !!data.has_back;
+  } catch {
+    return false;
+  }
+}
+
+// Emergency fallback: try to find a Printify variant by product + variant titles
+async function lookupPrintifyVariantIdByTitles(shopTitle, variantTitle) {
+  try {
+    const shopId = process.env.PRINTIFY_SHOP_ID;
+    let page = 1, all = [];
+    for (; page <= 10; page++) {
+      const url = `https://api.printify.com/v1/shops/${shopId}/products.json?page=${page}&limit=50`;
+      const data = await safeFetch(url, { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` }});
+      const arr = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+      if (!arr.length) break;
+      all = all.concat(arr);
+      if (arr.length < 50) break;
+    }
+
+    const norm = s => String(s||'').trim().toLowerCase();
+    const t  = norm(shopTitle);
+    const vt = norm(variantTitle || '');
+
+    const p = all.find(p => norm(p.title) === t) || all.find(p => norm(p.title).includes(t)) || null;
+    if (!p) return null;
+
+    const pv = (p.variants || []);
+    let v = pv.find(x => norm(x.title) === vt);
+    if (!v && pv.length === 1) v = pv[0];
+    if (!v && vt) v = pv.find(x => norm(x.title).includes(vt));
+    return v ? v.id : null;
+  } catch (e) {
+    console.warn('lookupPrintifyVariantIdByTitles failed:', e.message);
+    return null;
+  }
+}
+
 
 // --- Paged, filtered shop product fetch ---
 async function fetchAllProductsPagedFiltered() {
