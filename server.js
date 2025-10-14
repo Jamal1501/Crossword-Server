@@ -101,7 +101,7 @@ app.get('/apps/crossword/config', (req, res) => {
 });
 
 
-    // Resolve Shopify variant ID → Printify variant ID
+// Resolve Shopify variant ID → Printify variant ID
 app.get('/apps/crossword/resolve-printify-variant/:shopifyVariantId', async (req, res) => {
   try {
     const shopifyVid = String(req.params.shopifyVariantId);
@@ -263,7 +263,7 @@ function verifyAppProxy(req) {
 
 async function handlePrintifyOrder(order) {
   // Flatten useful fields from Shopify line items
-    const items = order.line_items.map((li) => {
+  const items = order.line_items.map((li) => {
     const props = Array.isArray(li.properties) ? li.properties : [];
     const getProp = (name) => {
       const p = props.find(x => x && x.name === name);
@@ -296,6 +296,8 @@ async function handlePrintifyOrder(order) {
       continue;
     }
 
+    // ✅ FIX: define shopifyVid and consolidate runtime lookup block
+    const shopifyVid = String(item.variant_id);
     let printifyVariantId = variantMap[shopifyVid];
 
     if (!printifyVariantId) {
@@ -318,30 +320,6 @@ async function handlePrintifyOrder(order) {
         continue;
       }
     }
-
-
-if (!printifyVariantId) {
-  console.warn(`⛔ No Printify mapping for Shopify variant ${shopifyVid}. Attempting runtime lookup...`,
-               { product: item.title, variant_title: item.variant_title });
-
-  const lookedUp = await lookupPrintifyVariantIdByTitles(item.title, item.variant_title);
-  if (lookedUp) {
-    printifyVariantId = lookedUp;
-    // cache it in memory so subsequent line-items in the same order benefit
-    variantMap[shopifyVid] = lookedUp;
-    console.log('✅ Runtime variant lookup succeeded:', { shopifyVid, printifyVariantId: lookedUp });
-  } else {
-    console.warn('⛔ Still no mapping after runtime lookup. Skipping this line item.', { shopifyVid });
-    continue;
-  }
-  try {
-      await fs.writeFile('./variant-map.json', JSON.stringify(variantMap, null, 2));
-      console.log('📝 Persisted runtime variant map update to variant-map.json');
-    } catch (e) {
-      console.warn('⚠️ Failed to persist variant-map.json:', e.message);
-    }
-}
-
 
     // Optional: per-variant print area (width/height/top/left)
     const area = printAreas?.[shopifyVid] || null;
@@ -469,43 +447,44 @@ app.post('/webhooks/orders/create', async (req, res) => {
 
   await handlePrintifyOrder(order);
   // After placing the Printify order, email clues PDF for "postcard" mode
-try {
-const to = [order.email, order.contact_email, order?.customer?.email]
-  .map(e => (e || '').trim())
-  .find(e => e.includes('@')) || '';  if (to) {
-    const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
-    const sent = new Set();
+  try {
+    const to = [order.email, order.contact_email, order?.customer?.email]
+      .map(e => (e || '').trim())
+      .find(e => e.includes('@')) || '';
+    if (to) {
+      const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+      const sent = new Set();
 
-    for (const li of lineItems) {
-      const props = Array.isArray(li.properties) ? li.properties : [];
-      const getProp = (name) => {
-        const p = props.find(x => x && x.name === name);
-        return p ? String(p.value || '') : '';
-      };
+      for (const li of lineItems) {
+        const props = Array.isArray(li.properties) ? li.properties : [];
+        const getProp = (name) => {
+          const p = props.find(x => x && x.name === name);
+          return p ? String(p.value || '') : '';
+        };
 
-      const mode   = getProp('_clue_output');     // 'back' | 'postcard' | 'none'
-      const flag   = getProp('_postcard_pdf');    // '1' when we forced digital postcard
-      const pid    = getProp('_puzzle_id');
-      const clues  = getProp('_clues_image_url');
+        const mode   = getProp('_clue_output');     // 'back' | 'postcard' | 'none'
+        const flag   = getProp('_postcard_pdf');    // '1' when we forced digital postcard
+        const pid    = getProp('_puzzle_id');
+        const clues  = getProp('_clues_image_url');
 
-      // Only send for the clues-only case
-      if (!pid || sent.has(pid)) continue;
-      if (!((mode === 'postcard') || flag === '1')) continue;
-      if (!clues) continue; // nothing to render
+        // Only send for the clues-only case
+        if (!pid || sent.has(pid)) continue;
+        if (!((mode === 'postcard') || flag === '1')) continue;
+        if (!clues) continue; // nothing to render
 
-      const pdf = await buildCluesPdfOnly(clues);
-      await sendCluesEmail({ to, puzzleId: pid, pdfBuffer: pdf });
-      sent.add(pid);
-      console.log('📧 Sent clues PDF email for puzzle', pid, 'to', to);
+        const pdf = await buildCluesPdfOnly(clues);
+        await sendCluesEmail({ to, puzzleId: pid, pdfBuffer: pdf });
+        sent.add(pid);
+        console.log('📧 Sent clues PDF email for puzzle', pid, 'to', to);
+      }
+    } else {
+      console.warn('No buyer email on order; skipping clues email.');
     }
-  } else {
-    console.warn('No buyer email on order; skipping clues email.');
+  } catch (e) {
+    console.error('❌ clues-email failed:', e);
   }
-} catch (e) {
-  console.error('❌ clues-email failed:', e);
-}
 
-return res.status(200).send('Webhook received');
+  return res.status(200).send('Webhook received');
 
 });
 
@@ -592,17 +571,15 @@ app.post('/api/printify/order', async (req, res) => {
       quantity
     } = req.body;
 
-// server-side guard against unsupported back printing
-
-let backUrl = backImageUrl;
-try {
-  const supportsBack = await serverHasBack(variantId, req); // variantId here must be Printify variant id
-  if (!supportsBack) {
-    if (backUrl) console.warn(`Dropping backImage for variant ${variantId} — no back support.`);
-    backUrl = undefined;
-  }
-} catch { backUrl = undefined; }
-
+    // server-side guard against unsupported back printing
+    let backUrl = backImageUrl;
+    try {
+      const supportsBack = await serverHasBack(variantId, req); // variantId here must be Printify variant id
+      if (!supportsBack) {
+        if (backUrl) console.warn(`Dropping backImage for variant ${variantId} — no back support.`);
+        backUrl = undefined;
+      }
+    } catch { backUrl = undefined; }
 
     const { orderId } = req.body;
     console.log('Received orderId:', orderId);
@@ -852,13 +829,13 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
     const { imageUrl, productId, variantId } = req.query;
 
     const backImageUrl = req.query.backImageUrl; // [ADD]
-        const position = {
+    const position = {
       x: req.query.x ? parseFloat(req.query.x) : 0.5,
       y: req.query.y ? parseFloat(req.query.y) : 0.5,
       scale: req.query.scale ? parseFloat(req.query.scale) : 1,
       angle: req.query.angle ? parseFloat(req.query.angle) : 0,
     }
-          const backPosition = {
+    const backPosition = {
       x: req.query.x ? parseFloat(req.query.x) : 0.5,
       y: req.query.y ? parseFloat(req.query.y) : 0.5,
       scale: req.query.scale ? parseFloat(req.query.scale) : 1,
@@ -872,27 +849,27 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
 
     // 1. Upload the crossword image
     const uploaded = await uploadImageFromUrl(imageUrl);
-  let uploadedBack = null; // [ADD]
-if (backImageUrl) {
-  uploadedBack = await uploadImageFromUrl(backImageUrl);
-}
+    let uploadedBack = null; // [ADD]
+    if (backImageUrl) {
+      uploadedBack = await uploadImageFromUrl(backImageUrl);
+    }
 
-if (uploadedBack?.id) {
-  await applyImagesToProductDual(productId, parseInt(variantId), uploaded.id, uploadedBack.id, position,backPosition);
-} else {
-  await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
-}
+    if (uploadedBack?.id) {
+      await applyImagesToProductDual(productId, parseInt(variantId), uploaded.id, uploadedBack.id, position, backPosition);
+    } else {
+      await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
+    }
 
-   // 3. Poll for mockups (Printify needs a few seconds)
-let product;
-for (let attempt = 1; attempt <= 10; attempt++) {
-  product = await fetchProduct(productId);
-  const ready = Array.isArray(product?.images) && product.images.some(i => i?.src);
-  if (ready) break;
-  await new Promise(r => setTimeout(r, 1200)); // ~12s max
-}
+    // 3. Poll for mockups (Printify needs a few seconds)
+    let product;
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      product = await fetchProduct(productId);
+      const ready = Array.isArray(product?.images) && product.images.some(i => i?.src);
+      if (ready) break;
+      await new Promise(r => setTimeout(r, 1200)); // ~12s max
+    }
 
-res.json({ success: true, uploadedImage: uploaded, product });
+    res.json({ success: true, uploadedImage: uploaded, product });
 
   } catch (err) {
     console.error("❌ Preview generation failed:", err.message);
@@ -1016,28 +993,32 @@ process.on('SIGTERM', () => {
 
 const PRINTIFY_API_KEY = process.env.PRINTIFY_API_KEY;
 
+// ✅ FIX: Replace /preview route to use shop product endpoint (valid) and pick enabled variant
 app.get('/preview', async (req, res) => {
-  console.log('Received /preview request:', req.query); // Log the request
-
-  const { productId, image, x = 0, y = 0, width = 300, height = 300 } = req.query;
-
-  if (!productId || !image) {
-    return res.status(400).json({ error: 'Missing productId or image' });
-  }
-
   try {
-    console.log('PRINTIFY_API_KEY:', process.env.PRINTIFY_API_KEY); // Log the API key
+    const { productId, image, x = 0, y = 0, width = 300, height = 300 } = req.query;
+    if (!productId || !image) {
+      return res.status(400).json({ error: 'Missing productId or image' });
+    }
 
-    // Fetch the first enabled variant for this product
-    const variantsRes = await fetch(`https://api.printify.com/v1/catalog/products/${productId}/variants.json`, {
-      headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` }
-    });
-    const variants = await variantsRes.json();
-    const firstEnabled = variants.variants?.find(v => v.is_enabled) || variants.variants?.[0];
+    const shopId = process.env.PRINTIFY_SHOP_ID;
+    const prodRes = await fetch(
+      `https://api.printify.com/v1/shops/${shopId}/products/${productId}.json`,
+      { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
+    );
+    if (!prodRes.ok) {
+      const t = await prodRes.text().catch(() => '');
+      return res.status(prodRes.status).json({ error: 'Printify product fetch failed', details: t });
+    }
+    const prod = await prodRes.json();
+    const firstEnabled = (prod.variants || []).find(v => v.is_enabled !== false) || (prod.variants || [])[0];
+    if (!firstEnabled) {
+      return res.status(404).json({ error: 'No enabled variants found for product' });
+    }
 
     const payload = {
       product_id: parseInt(productId),
-      variant_ids: [firstEnabled?.id || 1],
+      variant_ids: [Number(firstEnabled.id)],
       files: [
         {
           placement: 'front',
@@ -1052,8 +1033,6 @@ app.get('/preview', async (req, res) => {
       payload,
       { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
     );
-
-    console.log('Printify API response:', previewRes.data); // Log the Printify API response
 
     res.json({ previewUrl: previewRes.data.preview_url });
   } catch (err) {
