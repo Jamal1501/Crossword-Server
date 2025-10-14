@@ -1540,27 +1540,60 @@ async function verifyCatalogPair(blueprintId, printProviderId, variantId) {
 }
 
 // --- Try to read placeholder names (front/back/etc.) ---
-async function getVariantPlaceholderNames(blueprintId, printProviderId) {
-  const url = `${PRINTIFY_BASE}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/print_areas.json`;
-  const data = await safeFetch(url, { headers: PIFY_HEADERS });
+// Make this VARIANT-AWARE (prefer the specific variant, then fall back to print_areas)
+async function getVariantPlaceholderNames(blueprintId, printProviderId, variantId) {
+  // 1) Prefer variant-level placeholders (accurate per-variant)
+  try {
+    const url = `${PRINTIFY_BASE}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
+    const data = await safeFetch(url, { headers: PIFY_HEADERS });
 
-  const names = new Set();
-  const areas = Array.isArray(data?.print_areas) ? data.print_areas
-              : Array.isArray(data) ? data
-              : [];
+    const v = Array.isArray(data?.variants)
+      ? data.variants.find(x => Number(x.id) === Number(variantId))
+      : null;
 
-  for (const area of areas) {
-    const placeholders = area?.placeholders || area?.placeholders_json || area?.placeholdersList || [];
-    for (const ph of placeholders) {
-      const n = (ph?.name || ph)?.toString().trim().toLowerCase();
-      if (n) names.add(n);
+    if (v && Array.isArray(v.placeholders) && v.placeholders.length) {
+      const names = new Set();
+      for (const ph of v.placeholders) {
+        const val = (ph?.position || ph?.name || '').toString().trim().toLowerCase();
+        if (val) names.add(val);
+      }
+      if (names.size > 0) return Array.from(names);
     }
-    if (area?.name) names.add(String(area.name).trim().toLowerCase());
+  } catch (e) {
+    console.warn('getVariantPlaceholderNames (variant) failed:', e.message);
   }
 
-  if (names.size === 0) names.add('front'); // safe fallback
-  return Array.from(names);
+  // 2) Fallback: catalog print_areas (provider-wide)
+  try {
+    const url = `${PRINTIFY_BASE}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/print_areas.json`;
+    const data = await safeFetch(url, { headers: PIFY_HEADERS });
+
+    const names = new Set();
+    const areas = Array.isArray(data?.print_areas) ? data.print_areas
+                : Array.isArray(data)             ? data
+                : [];
+
+    for (const area of areas) {
+      // area-level name/position (rare but be permissive)
+      const areaName = (area?.name || area?.position || '').toString().trim().toLowerCase();
+      if (areaName) names.add(areaName);
+
+      const placeholders = area?.placeholders || area?.placeholders_json || area?.placeholdersList || [];
+      for (const ph of placeholders) {
+        const val = (ph?.position || ph?.name || '').toString().trim().toLowerCase();
+        if (val) names.add(val);
+      }
+    }
+
+    if (names.size > 0) return Array.from(names);
+  } catch (e) {
+    console.warn('getVariantPlaceholderNames (print_areas) failed:', e.message);
+  }
+
+  // Safe default
+  return ['front'];
 }
+
 
 
 // ======================= PRODUCT SPECS ROUTE =========================
@@ -1635,7 +1668,7 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
     // Get placeholder names (front, back, etc.)
     let placeholders = ['front'];
     try {
-      placeholders = await getVariantPlaceholderNames(bp, pp);
+      placeholders = await getVariantPlaceholderNames(bp, pp, variantId);
     } catch (e) {
       console.warn(`⚠️ Could not fetch placeholders for ${variantId}, using fallback`);
     }
