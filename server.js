@@ -214,7 +214,6 @@ async function buildCluesPdfOnly(cluesUrl) {
   const x = (a4w - w) / 2, y = (a4h - h) / 2;
 
   // soft panel for contrast
-  const { rgb } = await import('pdf-lib'); // already imported above, but safe in ESM
   page.drawRectangle({ x: x - 8, y: y - 8, width: w + 16, height: h + 16, color: rgb(1,1,1), opacity: 0.9 });
   page.drawImage(img, { x, y, width: w, height: h });
 
@@ -281,6 +280,7 @@ async function handlePrintifyOrder(order) {
 
     return {
       title: item.title,
+      
       variant_id: item.variant_id,              // Shopify variant ID
       quantity: item.quantity || 1,
       custom_image,
@@ -350,6 +350,12 @@ if (!printifyVariantId) {
     console.warn('⛔ Still no mapping after runtime lookup. Skipping this line item.', { shopifyVid });
     continue;
   }
+  try {
+      await fs.writeFile('./variant-map.json', JSON.stringify(variantMap, null, 2));
+      console.log('📝 Persisted runtime variant map update to variant-map.json');
+    } catch (e) {
+      console.warn('⚠️ Failed to persist variant-map.json:', e.message);
+    }
 }
 
 
@@ -480,8 +486,9 @@ app.post('/webhooks/orders/create', async (req, res) => {
   await handlePrintifyOrder(order);
   // After placing the Printify order, email clues PDF for "postcard" mode
 try {
-  const to = (order.email || order?.customer?.email || '').trim();
-  if (to) {
+const to = [order.email, order.contact_email, order?.customer?.email]
+  .map(e => (e || '').trim())
+  .find(e => e.includes('@')) || '';  if (to) {
     const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
     const sent = new Set();
 
@@ -602,15 +609,6 @@ app.post('/api/printify/order', async (req, res) => {
     } = req.body;
 
         // server-side guard against unsupported back printing
-async function serverHasBack(printifyVariantId, req) {
-  try {
-    const base = `${req.protocol}://${req.get('host')}`;
-    const r = await fetch(`${base}/apps/crossword/product-specs/${printifyVariantId}`);
-    if (!r.ok) return false;
-    const data = await r.json();
-    return !!data.has_back;
-  } catch { return false; }
-}
 
 let backUrl = backImageUrl;
 try {
