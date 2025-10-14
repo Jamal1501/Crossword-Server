@@ -319,7 +319,6 @@ async function handlePrintifyOrder(order) {
       }
     }
 
-let printifyVariantId = variantMap[shopifyVid];
 
 if (!printifyVariantId) {
   console.warn(`⛔ No Printify mapping for Shopify variant ${shopifyVid}. Attempting runtime lookup...`,
