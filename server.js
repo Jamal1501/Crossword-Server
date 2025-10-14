@@ -175,6 +175,80 @@ function verifyPdfToken(puzzleId, orderId, token) {
   return token && token === issuePdfToken(puzzleId, orderId);
 }
 
+
+// ---- Email + PDF helpers (clues-only) ----
+async function fetchBuf(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`fetch failed: ${r.status} ${url}`);
+  return Buffer.from(await r.arrayBuffer());
+}
+
+async function buildCluesPdfOnly(cluesUrl) {
+  const a4w = 595.28, a4h = 841.89;
+  const margin = 36;
+  const maxW = a4w - margin * 2;
+  const maxH = a4h - margin * 2;
+
+  const pdf = await PDFDocument.create();
+
+  // Optional branded background
+  const bgUrl = process.env.PDF_CLUES_BG_URL || process.env.PDF_BRAND_BG_URL || '';
+  const page = pdf.addPage([a4w, a4h]);
+  if (bgUrl) {
+    try {
+      const bgBuf = await fetchBuf(bgUrl);
+      const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
+      page.drawImage(bgImg, { x: 0, y: 0, width: a4w, height: a4h });
+    } catch (e) {
+      console.warn('PDF bg load failed:', e.message);
+    }
+  }
+
+  // Draw clues image centered on page
+  const buf = await fetchBuf(cluesUrl);
+  const isPng = buf[0] === 0x89 && buf[1] === 0x50;
+  const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
+  const { width, height } = img.size();
+  const scale = Math.min(maxW / width, maxH / height, 1);
+  const w = width * scale, h = height * scale;
+  const x = (a4w - w) / 2, y = (a4h - h) / 2;
+
+  // soft panel for contrast
+  const { rgb } = await import('pdf-lib'); // already imported above, but safe in ESM
+  page.drawRectangle({ x: x - 8, y: y - 8, width: w + 16, height: h + 16, color: rgb(1,1,1), opacity: 0.9 });
+  page.drawImage(img, { x, y, width: w, height: h });
+
+  return Buffer.from(await pdf.save());
+}
+
+async function sendCluesEmail({ to, puzzleId, pdfBuffer }) {
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
+    throw new Error('Missing RESEND_API_KEY or EMAIL_FROM');
+  }
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM,
+      to: [to],
+      subject: 'Your crossword clues (PDF)',
+      html: `<p>Thanks for your purchase!</p>
+             <p>Your clues PDF for puzzle <strong>${String(puzzleId).slice(0,8)}</strong> is attached.</p>`,
+      attachments: [{
+        filename: `clues-${String(puzzleId).slice(0,8)}.pdf`,
+        content: pdfBuffer.toString('base64')
+      }]
+    })
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(()=> '');
+    throw new Error(`Resend failed: ${res.status} ${t}`);
+  }
+}
+
 // Verify Shopify App Proxy signature on /apps/crossword/* endpoints
 function verifyAppProxy(req) {
   const sig = req.query.signature;
@@ -404,7 +478,44 @@ app.post('/webhooks/orders/create', async (req, res) => {
   }
 
   await handlePrintifyOrder(order);
-  return res.status(200).send('Webhook received');
+  // After placing the Printify order, email clues PDF for "postcard" mode
+try {
+  const to = (order.email || order?.customer?.email || '').trim();
+  if (to) {
+    const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+    const sent = new Set();
+
+    for (const li of lineItems) {
+      const props = Array.isArray(li.properties) ? li.properties : [];
+      const getProp = (name) => {
+        const p = props.find(x => x && x.name === name);
+        return p ? String(p.value || '') : '';
+      };
+
+      const mode   = getProp('_clue_output');     // 'back' | 'postcard' | 'none'
+      const flag   = getProp('_postcard_pdf');    // '1' when we forced digital postcard
+      const pid    = getProp('_puzzle_id');
+      const clues  = getProp('_clues_image_url');
+
+      // Only send for the clues-only case
+      if (!pid || sent.has(pid)) continue;
+      if (!((mode === 'postcard') || flag === '1')) continue;
+      if (!clues) continue; // nothing to render
+
+      const pdf = await buildCluesPdfOnly(clues);
+      await sendCluesEmail({ to, puzzleId: pid, pdfBuffer: pdf });
+      sent.add(pid);
+      console.log('📧 Sent clues PDF email for puzzle', pid, 'to', to);
+    }
+  } else {
+    console.warn('No buyer email on order; skipping clues email.');
+  }
+} catch (e) {
+  console.error('❌ clues-email failed:', e);
+}
+
+return res.status(200).send('Webhook received');
+
 });
 
 // ── Cloudinary config (standalone, not wrapped in extra parens) ────────────────
