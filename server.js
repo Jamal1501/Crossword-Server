@@ -296,7 +296,6 @@ async function handlePrintifyOrder(order) {
       continue;
     }
 
-    const shopifyVid = String(item.variant_id);
     let printifyVariantId = variantMap[shopifyVid];
 
     if (!printifyVariantId) {
@@ -320,7 +319,6 @@ async function handlePrintifyOrder(order) {
       }
     }
 
-const shopifyVid = String(item.variant_id);
 let printifyVariantId = variantMap[shopifyVid];
 
 if (!printifyVariantId) {
