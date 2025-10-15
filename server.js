@@ -212,7 +212,6 @@ async function buildCluesPdfOnly(cluesUrl) {
   }
 
   // Header band
-  page.drawRectangle({ x: margin, y: a4h - margin - headerH, width: maxW, height: headerH, color: rgb(1,1,1), opacity: 0.9 });
   if (logoImg) {
     const lh = headerH - 10;
     const lw = (logoImg.width / logoImg.height) * lh;
@@ -227,7 +226,6 @@ async function buildCluesPdfOnly(cluesUrl) {
   });
 
   // Footer band
-  page.drawRectangle({ x: margin, y: margin, width: maxW, height: footerH, color: rgb(1,1,1), opacity: 0.9 });
   const footerLeft = 'LoveFrames • loveframes.shop';
   const footerRight = 'Generated PDF';
   const approxWidth = (s, size) => (font ? font.widthOfTextAtSize(s, size) : s.length * size * 0.55);
