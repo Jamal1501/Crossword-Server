@@ -243,7 +243,6 @@ async function buildCluesPdfOnly(cluesUrl) {
   const x = (a4w - w) / 2;
   const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
 
-  page.drawRectangle({ x: x - 10, y: y - 10, width: w + 20, height: h + 20, color: rgb(1,1,1), opacity: 0.95 });
   page.drawImage(img, { x, y, width: w, height: h });
 
   return Buffer.from(await pdf.save());
@@ -280,7 +279,6 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, puzzleId = '' }) {
     }
 
     // header
-    page.drawRectangle({ x: margin, y: a4h - margin - headerH, width: maxW, height: headerH, color: rgb(1,1,1), opacity: 0.9 });
     if (logoImg) {
       const lh = headerH - 10;
       const lw = (logoImg.width / logoImg.height) * lh;
@@ -303,12 +301,10 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, puzzleId = '' }) {
       const w = width * scale, h = height * scale;
       const x = (a4w - w) / 2;
       const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
-      page.drawRectangle({ x: x - 10, y: y - 10, width: w + 20, height: h + 20, color: rgb(1,1,1), opacity: 0.95 });
       page.drawImage(img, { x, y, width: w, height: h });
     }
 
     // footer
-    page.drawRectangle({ x: margin, y: margin, width: maxW, height: footerH, color: rgb(1,1,1), opacity: 0.9 });
     page.drawText(footerLeft, { x: margin + 10, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font });
     const rw = approxWidth(footerRight, 10);
     page.drawText(footerRight, { x: a4w - margin - 10 - rw, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font });
