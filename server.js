@@ -1609,12 +1609,15 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId) {
               : [];
 
   for (const area of areas) {
-    const placeholders = area?.placeholders || area?.placeholders_json || area?.placeholdersList || [];
-    for (const ph of placeholders) {
-      const n = (ph?.name || ph)?.toString().trim().toLowerCase();
-      if (n) names.add(n);
-    }
-    if (area?.name) names.add(String(area.name).trim().toLowerCase());
+const placeholders = area?.placeholders || area?.placeholders_json || area?.placeholdersList || [];
+for (const ph of placeholders) {
+  const pos = (ph?.position || ph?.name || ph)?.toString().trim().toLowerCase();
+  if (pos) names.add(pos);
+}
+// keep name, but also capture area.position if present
+if (area?.position) names.add(String(area.position).trim().toLowerCase());
+if (area?.name)     names.add(String(area.name).trim().toLowerCase());
+
   }
 
   if (names.size === 0) names.add('front'); // safe fallback
@@ -1688,16 +1691,28 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
     }
 
     // Get placeholder names (front, back, etc.)
-    let placeholders = ['front'];
-    try {
-      placeholders = await getVariantPlaceholderNames(bp, pp);
-    } catch (e) {
-      console.warn(`⚠️ Could not fetch placeholders for ${variantId}, using fallback`);
-    }
+let placeholders = ['front'];
+try {
+  placeholders = await getVariantPlaceholderNames(bp, pp);
+} catch (e) {
+  // keep fallback
+}
 
-    const hasBack = placeholders.some(n =>
-      /back|rear|reverse|backside|secondary|alt/i.test(n)
-    );
+// 🔧 ADD: merge variant-specific placements from the actual shop product
+try {
+  const detail = await safeFetch(`${PRINTIFY_BASE}/shops/${SHOP_ID}/products/${product.id}.json`, { headers: PIFY_HEADERS });
+  const fromProduct = (detail?.print_areas || [])
+    .flatMap(a => (a?.placeholders || []).map(ph =>
+      (ph?.position || ph?.name || '').toString().trim().toLowerCase()
+    ))
+    .filter(Boolean);
+  placeholders = Array.from(new Set([...placeholders, ...fromProduct]));
+} catch (_) {
+  // ignore and rely on catalog-only data
+}
+
+const hasBack = placeholders.some(n => /back|rear|reverse|backside|secondary|alt/i.test(n));
+
 
     console.log(`✅ Variant ${variantId} specs: has_back=${hasBack}, placeholders=${placeholders.join(',')}`);
 
