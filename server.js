@@ -1,4 +1,4 @@
-// server.js (cleaned)
+// server.js
 import fs from 'fs/promises';
 import express from 'express';
 import crypto from 'crypto';
@@ -85,50 +85,27 @@ try {
 }
 
 // ======================= CLIENT CONFIG ROUTE =========================
-// Tells the editor which Shopify variant to use for the postcard bundle item.
-// ======================= CLIENT CONFIG ROUTE =========================
 app.get('/apps/crossword/config', (req, res) => {
   const postcardVariantId = process.env.POSTCARD_SHOPIFY_VARIANT_ID || '';
-  
   if (!postcardVariantId) {
     console.warn('⚠️ POSTCARD_SHOPIFY_VARIANT_ID not configured in environment');
   }
-
-  res.json({
-    ok: true,
-    postcardVariantId: postcardVariantId
-  });
+  res.json({ ok: true, postcardVariantId });
 });
-
 
 // Resolve Shopify variant ID → Printify variant ID
 app.get('/apps/crossword/resolve-printify-variant/:shopifyVariantId', async (req, res) => {
   try {
     const shopifyVid = String(req.params.shopifyVariantId);
-    
     if (!shopifyVid) {
       return res.status(400).json({ ok: false, error: 'Missing shopifyVariantId' });
     }
-
-    // Check in-memory variant map first
     const printifyVid = variantMap[shopifyVid];
-    
     if (printifyVid) {
-      return res.json({ 
-        ok: true, 
-        shopify_variant_id: shopifyVid,
-        printify_variant_id: printifyVid 
-      });
+      return res.json({ ok: true, shopify_variant_id: shopifyVid, printify_variant_id: printifyVid });
     }
-
-    // Not found in map
     console.warn(`⚠️ No Printify mapping for Shopify variant ${shopifyVid}`);
-    return res.status(404).json({ 
-      ok: false, 
-      error: 'No Printify mapping found',
-      shopify_variant_id: shopifyVid
-    });
-
+    return res.status(404).json({ ok: false, error: 'No Printify mapping found', shopify_variant_id: shopifyVid });
   } catch (err) {
     console.error('❌ resolve-printify-variant error:', err);
     return res.status(500).json({ ok: false, error: err.message });
@@ -145,7 +122,7 @@ app.get('/print-areas', (req, res) => {
 });
 
 app.get('/apps/crossword/postcard-variant-id', async (req, res) => {
-  const id = process.env.POSTCARD_SHOPIFY_VARIANT_ID; // <-- your existing env var
+  const id = process.env.POSTCARD_SHOPIFY_VARIANT_ID; // optional legacy
   if (!id) return res.status(404).json({ ok: false, error: 'Missing POSTCARD_SHOPIFY_VARIANT_ID' });
   return res.json({ ok: true, variant_id: String(id) });
 });
@@ -175,24 +152,55 @@ function verifyPdfToken(puzzleId, orderId, token) {
   return token && token === issuePdfToken(puzzleId, orderId);
 }
 
-// ---- Email + PDF helpers (clues-only) ----
+// ---- Email + PDF helpers (updated + new) ----
 async function fetchBuf(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`fetch failed: ${r.status} ${url}`);
   return Buffer.from(await r.arrayBuffer());
 }
 
+// Optional brand assets loader (logo + font)
+async function prepareBrandAssets(pdf) {
+  const out = { logoImg: null, font: null };
+  try {
+    const logoUrl = process.env.PDF_LOGO_URL || '';
+    if (logoUrl) {
+      const buf = await fetchBuf(logoUrl);
+      out.logoImg = (buf[0] === 0x89 && buf[1] === 0x50) ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
+    }
+  } catch (e) {
+    console.warn('PDF logo load failed:', e.message);
+  }
+  try {
+    const fontUrl = process.env.PDF_FONT_URL || '';
+    if (fontUrl) {
+      const fbuf = await fetchBuf(fontUrl);
+      out.font = await pdf.embedFont(fbuf);
+    }
+  } catch (e) {
+    console.warn('PDF custom font load failed:', e.message);
+  }
+  return out;
+}
+
+// Styled 1-page CLUES PDF (email attachment)
 async function buildCluesPdfOnly(cluesUrl) {
   const a4w = 595.28, a4h = 841.89;
   const margin = 36;
+  const headerH = 38;
+  const footerH = 26;
+  const innerTop = margin + headerH + 10;
+  const innerBottom = margin + footerH + 10;
+
   const maxW = a4w - margin * 2;
-  const maxH = a4h - margin * 2;
+  const maxH = a4h - innerTop - innerBottom;
 
   const pdf = await PDFDocument.create();
+  const page = pdf.addPage([a4w, a4h]);
+  const { logoImg, font } = await prepareBrandAssets(pdf);
 
   // Optional branded background
   const bgUrl = process.env.PDF_CLUES_BG_URL || process.env.PDF_BRAND_BG_URL || '';
-  const page = pdf.addPage([a4w, a4h]);
   if (bgUrl) {
     try {
       const bgBuf = await fetchBuf(bgUrl);
@@ -203,23 +211,137 @@ async function buildCluesPdfOnly(cluesUrl) {
     }
   }
 
-  // Draw clues image centered on page
+  // Header band
+  page.drawRectangle({ x: margin, y: a4h - margin - headerH, width: maxW, height: headerH, color: rgb(1,1,1), opacity: 0.9 });
+  if (logoImg) {
+    const lh = headerH - 10;
+    const lw = (logoImg.width / logoImg.height) * lh;
+    page.drawImage(logoImg, { x: margin + 10, y: a4h - margin - headerH + 5, width: lw, height: lh });
+  }
+  page.drawText('Crossword Clues', {
+    x: margin + (logoImg ? 10 + (logoImg.width / logoImg.height) * (headerH - 10) + 10 : 14),
+    y: a4h - margin - headerH + 11,
+    size: 16,
+    color: rgb(0.12, 0.12, 0.12),
+    font
+  });
+
+  // Footer band
+  page.drawRectangle({ x: margin, y: margin, width: maxW, height: footerH, color: rgb(1,1,1), opacity: 0.9 });
+  const footerLeft = 'LoveFrames • loveframes.shop';
+  const footerRight = 'Generated PDF';
+  const approxWidth = (s, size) => (font ? font.widthOfTextAtSize(s, size) : s.length * size * 0.55);
+  const rw = approxWidth(footerRight, 10);
+  page.drawText(footerLeft, { x: margin + 10, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font });
+  page.drawText(footerRight, { x: a4w - margin - 10 - rw, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font });
+
+  // Clues image
   const buf = await fetchBuf(cluesUrl);
   const isPng = buf[0] === 0x89 && buf[1] === 0x50;
   const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
   const { width, height } = img.size();
   const scale = Math.min(maxW / width, maxH / height, 1);
   const w = width * scale, h = height * scale;
-  const x = (a4w - w) / 2, y = (a4h - h) / 2;
+  const x = (a4w - w) / 2;
+  const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
 
-  // soft panel for contrast
-  page.drawRectangle({ x: x - 8, y: y - 8, width: w + 16, height: h + 16, color: rgb(1,1,1), opacity: 0.9 });
+  page.drawRectangle({ x: x - 10, y: y - 10, width: w + 20, height: h + 20, color: rgb(1,1,1), opacity: 0.95 });
   page.drawImage(img, { x, y, width: w, height: h });
 
   return Buffer.from(await pdf.save());
 }
 
-async function sendCluesEmail({ to, puzzleId, pdfBuffer }) {
+// Styled 1–2 page GRID + CLUES PDF (download/email)
+async function buildGridAndCluesPdf({ gridBuf, cluesBuf, puzzleId = '' }) {
+  const a4w = 595.28, a4h = 841.89;
+  const margin = 36;
+  const headerH = 38;
+  const footerH = 26;
+  const innerTop = margin + headerH + 10;
+  const innerBottom = margin + footerH + 10;
+  const maxW = a4w - margin * 2;
+  const maxH = a4h - innerTop - innerBottom;
+
+  const pdf = await PDFDocument.create();
+  const { logoImg, font } = await prepareBrandAssets(pdf);
+  const bgUrl = process.env.PDF_BRAND_BG_URL || '';
+  const approxWidth = (s, size) => (font ? font.widthOfTextAtSize(s, size) : s.length * size * 0.55);
+
+  const addPageWithImage = async ({ imageBuf, title, footerLeft, footerRight }) => {
+    const page = pdf.addPage([a4w, a4h]);
+
+    // background
+    if (bgUrl) {
+      try {
+        const bgBuf = await fetchBuf(bgUrl);
+        const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
+        page.drawImage(bgImg, { x: 0, y: 0, width: a4w, height: a4h });
+      } catch (e) {
+        console.warn('PDF bg load failed:', e.message);
+      }
+    }
+
+    // header
+    page.drawRectangle({ x: margin, y: a4h - margin - headerH, width: maxW, height: headerH, color: rgb(1,1,1), opacity: 0.9 });
+    if (logoImg) {
+      const lh = headerH - 10;
+      const lw = (logoImg.width / logoImg.height) * lh;
+      page.drawImage(logoImg, { x: margin + 10, y: a4h - margin - headerH + 5, width: lw, height: lh });
+    }
+    page.drawText(title, {
+      x: margin + (logoImg ? 10 + (logoImg.width / logoImg.height) * (headerH - 10) + 10 : 14),
+      y: a4h - margin - headerH + 11,
+      size: 16,
+      color: rgb(0.12, 0.12, 0.12),
+      font
+    });
+
+    // main image
+    if (imageBuf) {
+      const isPng = imageBuf[0] === 0x89 && imageBuf[1] === 0x50;
+      const img = isPng ? await pdf.embedPng(imageBuf) : await pdf.embedJpg(imageBuf);
+      const { width, height } = img.size();
+      const scale = Math.min(maxW / width, maxH / height, 1);
+      const w = width * scale, h = height * scale;
+      const x = (a4w - w) / 2;
+      const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
+      page.drawRectangle({ x: x - 10, y: y - 10, width: w + 20, height: h + 20, color: rgb(1,1,1), opacity: 0.95 });
+      page.drawImage(img, { x, y, width: w, height: h });
+    }
+
+    // footer
+    page.drawRectangle({ x: margin, y: margin, width: maxW, height: footerH, color: rgb(1,1,1), opacity: 0.9 });
+    page.drawText(footerLeft, { x: margin + 10, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font });
+    const rw = approxWidth(footerRight, 10);
+    page.drawText(footerRight, { x: a4w - margin - 10 - rw, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font });
+  };
+
+  const pidShort = String(puzzleId || '').slice(0, 8);
+  const leftBrand = 'LoveFrames • loveframes.shop';
+
+  if (gridBuf) {
+    await addPageWithImage({
+      imageBuf: gridBuf,
+      title: 'Crossword Grid',
+      footerLeft: leftBrand,
+      footerRight: pidShort ? `Puzzle ${pidShort} — Page 1` : 'Page 1'
+    });
+  }
+
+  if (cluesBuf) {
+    await addPageWithImage({
+      imageBuf: cluesBuf,
+      title: 'Crossword Clues',
+      footerLeft: leftBrand,
+      footerRight: pidShort ? `Puzzle ${pidShort} — Page 2` : 'Page 2'
+    });
+  }
+
+  return Buffer.from(await pdf.save());
+}
+
+// Generic email sender for any PDF attachment (Resend)
+async function sendEmailWithAttachment({ to, subject, html, filename, pdfBuffer }) {
   if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
     throw new Error('Missing RESEND_API_KEY or EMAIL_FROM');
   }
@@ -232,11 +354,10 @@ async function sendCluesEmail({ to, puzzleId, pdfBuffer }) {
     body: JSON.stringify({
       from: process.env.EMAIL_FROM,
       to: [to],
-      subject: 'Your crossword clues (PDF)',
-      html: `<p>Thanks for your purchase!</p>
-             <p>Your clues PDF for puzzle <strong>${String(puzzleId).slice(0,8)}</strong> is attached.</p>`,
+      subject,
+      html,
       attachments: [{
-        filename: `clues-${String(puzzleId).slice(0,8)}.pdf`,
+        filename,
         content: pdfBuffer.toString('base64')
       }]
     })
@@ -245,6 +366,18 @@ async function sendCluesEmail({ to, puzzleId, pdfBuffer }) {
     const t = await res.text().catch(()=> '');
     throw new Error(`Resend failed: ${res.status} ${t}`);
   }
+}
+
+// (Kept for compatibility—unused now unless you call it elsewhere)
+async function sendCluesEmail({ to, puzzleId, pdfBuffer }) {
+  return sendEmailWithAttachment({
+    to,
+    subject: 'Your crossword clues (PDF)',
+    html: `<p>Thanks for your purchase!</p>
+           <p>Your clues PDF for puzzle <strong>${String(puzzleId).slice(0,8)}</strong> is attached.</p>`,
+    filename: `clues-${String(puzzleId).slice(0,8)}.pdf`,
+    pdfBuffer
+  });
 }
 
 // Verify Shopify App Proxy signature on /apps/crossword/* endpoints
@@ -258,92 +391,6 @@ function verifyAppProxy(req) {
   const message = query ? `${pathOnly}?${query}` : pathOnly;
   const digest = crypto.createHmac('sha256', SHOPIFY_APP_PROXY_SECRET).update(message).digest('hex');
   return digest === sig;
-}
-
-// --- Resolve buyer email robustly -----------------------------------
-async function resolveBuyerEmail(order) {
-  try {
-    const pick = (...arr) => arr.find(e => typeof e === 'string' && e.includes('@'));
-
-    // 1) from line-item properties (theme can set _buyer_email)
-    const propEmails = [];
-    for (const li of (order.line_items || [])) {
-      for (const p of (li.properties || [])) {
-        if (!p) continue;
-        const n = String(p.name || '').toLowerCase();
-        const v = String(p.value || '');
-        if (['_buyer_email', 'buyer_email', 'email'].includes(n) && v.includes('@')) {
-          propEmails.push(v);
-        }
-      }
-    }
-
-    // 2) common order fields
-    let to = pick(
-      order.email,
-      order.contact_email,
-      order?.customer?.email,
-      order?.billing_address?.email,
-      order?.shipping_address?.email,
-      ...propEmails
-    );
-    if (to) return to;
-
-    // 3) Shopify Admin lookup (if we have a customer id)
-    if (order?.customer?.id && process.env.SHOPIFY_STORE && process.env.SHOPIFY_PASSWORD) {
-      const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/customers/${order.customer.id}.json`;
-      const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD } });
-      if (resp.ok) {
-        const data = await resp.json();
-        const adminEmail = data?.customer?.email || data?.customer?.verified_email || '';
-        if (adminEmail && adminEmail.includes('@')) return adminEmail;
-      } else {
-        console.warn('resolveBuyerEmail: admin customer fetch failed', resp.status);
-      }
-    }
-
-    return '';
-  } catch (e) {
-    console.warn('resolveBuyerEmail failed:', e.message);
-    return '';
-  }
-}
-
-// --- Find a paid order by puzzleId (for claim self-heal) ------------
-async function findPaidOrderByPuzzleId(puzzleId) {
-  const store = process.env.SHOPIFY_STORE;
-  const token = process.env.SHOPIFY_PASSWORD;
-  if (!store || !token) return null;
-
-  const base = `https://${store}.myshopify.com/admin/api/2024-01`;
-  let pageInfo = null;
-
-  for (let i = 0; i < 5; i++) { // up to 5 pages of recent orders
-    const url = `${base}/orders.json?status=any&limit=250${pageInfo ? `&page_info=${pageInfo}` : ''}&fields=id,email,contact_email,customer,financial_status,line_items`;
-    const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
-    if (!r.ok) {
-      console.warn('Shopify orders fetch failed:', r.status);
-      return null;
-    }
-    const data = await r.json();
-    const orders = data?.orders || [];
-
-    for (const o of orders) {
-      if (!['paid', 'partially_paid'].includes(o.financial_status)) continue;
-
-      for (const li of (o.line_items || [])) {
-        const props = li.properties || [];
-        const has = props.some(p => p?.name === '_puzzle_id' && String(p.value || '') === String(puzzleId));
-        if (has) return o;
-      }
-    }
-
-    // Pagination via Link header
-    const link = r.headers.get('link') || '';
-    const next = /<[^>]*page_info=([^&>]+)[^>]*>; rel="next"/.exec(link);
-    if (next) pageInfo = next[1]; else break;
-  }
-  return null;
 }
 
 async function handlePrintifyOrder(order) {
@@ -362,7 +409,7 @@ async function handlePrintifyOrder(order) {
     const design_specs = design_specs_raw ? (() => { try { return JSON.parse(design_specs_raw); } catch { return null; } })() : null;
 
     return {
-      title: li.title,                           // Shopify line item title
+      title: li.title,
       variant_title: li.variant_title || '',
       variant_id: li.variant_id,                 // Shopify variant ID
       quantity: li.quantity || 1,
@@ -386,13 +433,12 @@ async function handlePrintifyOrder(order) {
 
     if (!printifyVariantId) {
       console.warn(`⛔ No Printify mapping for Shopify variant ${shopifyVid}. Attempting runtime lookup...`,
-        { product: item.title, variant_title: item.variant_title });
+                   { product: item.title, variant_title: item.variant_title });
 
       const lookedUp = await lookupPrintifyVariantIdByTitles(item.title, item.variant_title);
       if (lookedUp) {
         printifyVariantId = lookedUp;
-        // cache it in memory and persist to file
-        variantMap[shopifyVid] = lookedUp;
+        variantMap[shopifyVid] = lookedUp; // cache for this process
         console.log('✅ Runtime variant lookup succeeded:', { shopifyVid, printifyVariantId: lookedUp });
         try {
           await fs.writeFile('./variant-map.json', JSON.stringify(variantMap, null, 2));
@@ -445,14 +491,14 @@ async function handlePrintifyOrder(order) {
       country: order.shipping_address?.country_code || ''
     };
 
-    // Only send back image to Printify if user chose to print clues on back
+    // 🔹 Only send back image to Printify if user chose to print clues on back
     const backImageUrl =
       item.clue_output_mode === 'back' && item.clues_image_url ? item.clues_image_url : undefined;
 
     try {
       const response = await createOrder({
         imageUrl: item.custom_image,
-        backImageUrl,
+        backImageUrl,                     // pass back image for printing on back (when selected)
         variantId: printifyVariantId,
         quantity: item.quantity,
         position,
@@ -529,15 +575,15 @@ app.post('/webhooks/orders/create', async (req, res) => {
     console.error('❌ Failed to index paid puzzleIds', e);
   }
 
+  // Place the Printify order(s)
   await handlePrintifyOrder(order);
 
-  // After placing the Printify order, email clues PDF for "postcard" mode
+  // === NEW: Email FULL (grid + clues) PDF to buyer, once per puzzle ===
   try {
-    let to = await resolveBuyerEmail(order);
-    if (!to && process.env.EMAIL_FALLBACK_TO) {
-      console.warn('No buyer email on order; using EMAIL_FALLBACK_TO for clues PDF.');
-      to = process.env.EMAIL_FALLBACK_TO;
-    }
+    const to =
+      [order.email, order.contact_email, order?.customer?.email, process.env.EMAIL_FALLBACK_TO]
+      .map(e => (e || '').trim())
+      .find(e => e.includes('@')) || '';
 
     if (to) {
       const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
@@ -550,32 +596,48 @@ app.post('/webhooks/orders/create', async (req, res) => {
           return p ? String(p.value || '') : '';
         };
 
-        const mode   = getProp('_clue_output');     // 'back' | 'postcard' | 'none'
-        const flag   = getProp('_postcard_pdf');    // '1' when we forced digital postcard
         const pid    = getProp('_puzzle_id');
-        const clues  = getProp('_clues_image_url');
+        const grid   = getProp('_custom_image');     // crossword image URL
+        const clues  = getProp('_clues_image_url');  // clues image URL
 
-        // Only send for the clues-only case
         if (!pid || sent.has(pid)) continue;
-        if (!((mode === 'postcard') || flag === '1')) continue;
-        if (!clues) continue; // nothing to render
+        if (!grid && !clues) continue; // nothing to render
 
-        const pdf = await buildCluesPdfOnly(clues);
-        await sendCluesEmail({ to, puzzleId: pid, pdfBuffer: pdf });
+        // Fetch image buffers (if available)
+        const [gridBuf, cluesBuf] = await Promise.all([
+          grid ? fetchBuf(grid) : Promise.resolve(null),
+          clues ? fetchBuf(clues) : Promise.resolve(null)
+        ]);
+
+        const pdfBytes = await buildGridAndCluesPdf({
+          gridBuf: gridBuf || undefined,
+          cluesBuf: cluesBuf || undefined,
+          puzzleId: pid
+        });
+
+        await sendEmailWithAttachment({
+          to,
+          subject: 'Your printable crossword (PDF)',
+          html: `<p>Thanks for your purchase!</p>
+                 <p>Your printable PDF for puzzle <strong>${String(pid).slice(0,8)}</strong> is attached.</p>`,
+          filename: `crossword-${String(pid).slice(0,8)}.pdf`,
+          pdfBuffer: Buffer.from(pdfBytes)
+        });
+
         sent.add(pid);
-        console.log('📧 Sent clues PDF email for puzzle', pid, 'to', to);
+        console.log('📧 Sent FULL PDF email for puzzle', pid, 'to', to);
       }
     } else {
-      console.warn('No buyer email on order and no EMAIL_FALLBACK_TO; skipping clues email.');
+      console.warn('No buyer email on order; skipping full PDF email.');
     }
   } catch (e) {
-    console.error('❌ clues-email failed:', e);
+    console.error('❌ full-pdf-email failed:', e);
   }
 
   return res.status(200).send('Webhook received');
 });
 
-// ── Cloudinary config (standalone, not wrapped in extra parens) ────────────────
+// ── Cloudinary config ───────────────────────────────────────────────
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key:    process.env.CLOUDINARY_API_KEY,
@@ -588,7 +650,6 @@ app.post('/admin/generate-variant-map', async (req, res) => {
     if (auth !== `Bearer ${process.env.ADMIN_SECRET}`) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
-
     const map = await generateMap();
     res.json({ success: true, generated: map });
   } catch (err) {
@@ -625,7 +686,6 @@ app.get('/api/printify/test-variant', async (req, res) => {
     const providers = await printifyService.listPrintProviders(blueprintId);
     const variants = await printifyService.listVariants(blueprintId, providers[0].id);
     const variant = variants.find(v => v.is_enabled !== false) || variants[0];
-
     res.json({ variantId: variant.id, title: variant.title });
   } catch (err) {
     console.error(err);
@@ -649,31 +709,18 @@ app.post('/api/printify/order', async (req, res) => {
   try {
     const {
       imageUrl,
-      backImageUrl,          // can be dropped if variant has no back
+      backImageUrl,          // optional back
       base64Image,
       variantId,
       position,
       recipient,
-      quantity
+      quantity,
+      orderId
     } = req.body;
-
-    // server-side guard against unsupported back printing
-    let backUrl = backImageUrl;
-    try {
-      const supportsBack = await serverHasBack(variantId, req); // variantId here must be Printify variant id
-      if (!supportsBack) {
-        if (backUrl) console.warn(`Dropping backImage for variant ${variantId} — no back support.`);
-        backUrl = undefined;
-      }
-    } catch { backUrl = undefined; }
-
-    const { orderId } = req.body;
-    console.log('Received orderId:', orderId);
 
     if (!orderId) {
       return res.status(400).json({ error: 'Missing orderId', success: false });
     }
-
     if (submittedOrders.has(orderId)) {
       console.log('Duplicate order blocked:', orderId);
       return res.status(200).json({ success: true, duplicate: true });
@@ -686,6 +733,16 @@ app.post('/api/printify/order', async (req, res) => {
     if (!variantId || !recipient) {
       return res.status(400).json({ error: 'Missing required fields: variantId, recipient', success: false });
     }
+
+    // server-side guard against unsupported back printing
+    let backUrl = backImageUrl;
+    try {
+      const supportsBack = await serverHasBack(variantId, req); // variantId here must be Printify variant id
+      if (!supportsBack) {
+        if (backUrl) console.warn(`Dropping backImage for variant ${variantId} — no back support.`);
+        backUrl = undefined;
+      }
+    } catch { backUrl = undefined; }
 
     console.log('Creating order with:', {
       hasImageUrl: !!imageUrl,
@@ -742,9 +799,10 @@ app.post('/api/printify/order-from-url', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: cloudinaryUrl, variantId, recipient', success: false });
     }
 
+    // guard unsupported back
     let backUrl = backImageUrl;
     try {
-      const supportsBack = await serverHasBack(variantId, req); // variantId must be Printify variant id
+      const supportsBack = await serverHasBack(variantId, req);
       if (!supportsBack) {
         if (backUrl) console.warn(`Dropping backImage for variant ${variantId} — no back support.`);
         backUrl = undefined;
@@ -776,11 +834,7 @@ app.get('/products', async (req, res) => {
   try {
     const response = await axios.get(
       `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
-        },
-      }
+      { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
     );
 
     const allProducts = Array.isArray(response.data) ? response.data : response.data.data;
@@ -862,10 +916,10 @@ app.get('/apps/crossword/products', async (req, res) => {
         printifyVariantId: pref.id,        // default Printify variant
         variants: variantList,             // mapped only
         title: p.title,
-        optionNames: [],                   // we don’t have Shopify option names here
+        optionNames: [],
         handle: '',
         image: img,
-        shopifyVariantId: String(firstShopifyVid || ''),          // preferred Shopify variant
+        shopifyVariantId: String(firstShopifyVid || ''),
         printifyProductId: p.id,
         variantId: firstShopifyVid ? Number(firstShopifyVid) : null,
         price: parseFloat(pref.price) || 0,
@@ -885,7 +939,7 @@ import { uploadImageFromUrl, applyImageToProduct, applyImagesToProductDual, fetc
 
 app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
   try {
-    const { imageUrl, productId, variantId, backImageUrl } = req.query; // [ADD backImageUrl]
+    const { imageUrl, productId, variantId, backImageUrl } = req.query; // backImageUrl optional
 
     // 1. Upload crossword image to Printify
     const uploadedImage = await uploadImageFromUrl(imageUrl);
@@ -897,10 +951,7 @@ app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
     const previewImages = updatedProduct.images.map(img => img.src);
 
     // 4. Return them to frontend
-    res.json({
-      success: true,
-      previewImages
-    });
+    res.json({ success: true, previewImages });
   } catch (err) {
     console.error("❌ Preview product error:", err);
     res.status(500).json({ error: err.message });
@@ -910,8 +961,8 @@ app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
 app.get('/apps/crossword/preview-product', async (req, res) => {
   try {
     const { imageUrl, productId, variantId } = req.query;
-
     const backImageUrl = req.query.backImageUrl;
+
     const position = {
       x: req.query.x ? parseFloat(req.query.x) : 0.5,
       y: req.query.y ? parseFloat(req.query.y) : 0.5,
@@ -952,7 +1003,6 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
     }
 
     res.json({ success: true, uploadedImage: uploaded, product });
-
   } catch (err) {
     console.error("❌ Preview generation failed:", err.message);
     res.status(500).json({ error: err.message });
@@ -966,6 +1016,7 @@ app.get('/api/printify/products', async (req, res) => {
       headers: {
         Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
         'Content-Type': 'application/json',
+        'User-Agent': 'Crossword-Preview/1.0'
       },
     });
     res.json(products);
@@ -1031,7 +1082,7 @@ async function transformProducts(printifyData, shopifyData) {
 
       const variant = variantRes?.variants?.find(v => v.id === p.variants[0]?.id);
       console.log('Variant object for', p.title, JSON.stringify(variant, null, 2));
-      const area = variant?.placeholders?.find(p => p.position === 'front');
+      const area = variant?.placeholders?.find(pp => pp.position === 'front');
       console.log('Fetched print area for:', p.title, area);
 
       if (area) {
@@ -1087,7 +1138,7 @@ app.get('/preview', async (req, res) => {
   try {
     console.log('PRINTIFY_API_KEY:', process.env.PRINTIFY_API_KEY); // Log the API key
 
-    // Fetch the first enabled variant for this product (catalog endpoint is fine for quick previews)
+    // Fetch the first enabled variant for this product
     const variantsRes = await fetch(`https://api.printify.com/v1/catalog/products/${productId}/variants.json`, {
       headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` }
     });
@@ -1213,12 +1264,7 @@ app.get('/apps/crossword/mockup-products', (req, res) => {
         image: "https://cdn.shopify.com/s/files/1/0911/1951/8025/files/4235187304372348206_2048.jpg?v=1751919279",
         variantId: "52614764036425",
         price: 12.99,
-        printArea: {
-          width: 300,
-          height: 300,
-          top: 50,
-          left: 50
-        }
+        printArea: { width: 300, height: 300, top: 50, left: 50 }
       }
     ]
   });
@@ -1243,9 +1289,7 @@ app.get("/apps/crossword/product-print-areas", async (req, res) => {
 
     const productRes = await fetch(
       `https://api.printify.com/v1/shops/${shopId}/products/${productId}.json`,
-      {
-        headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` },
-      }
+      { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
     );
     const product = await productRes.json();
 
@@ -1274,20 +1318,16 @@ app.get("/apps/crossword/all-print-areas", async (req, res) => {
     // get all products
     const productsRes = await fetch(
       `https://api.printify.com/v1/shops/${shopId}/products.json`,
-      {
-        headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` },
-      }
+      { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
     );
     const productsJson = await productsRes.json();
-    const products = productsJson.data || []; // ✅ FIX
+    const products = productsJson.data || [];
 
     const results = {};
     for (const prod of products) {
       const detailRes = await fetch(
         `https://api.printify.com/v1/shops/${shopId}/products/${prod.id}.json`,
-        {
-          headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` },
-        }
+        { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
       );
       const detail = await detailRes.json();
       results[prod.id] = {
@@ -1305,38 +1345,75 @@ app.get("/apps/crossword/all-print-areas", async (req, res) => {
 
 // Clean server code without App Proxy dependencies
 
-// ❌ Removed: Direct purchase registration and PDF download (no App Proxy)
-// This endpoint bypassed purchase gating. Keep disabled in production.
-// If you need it for internal tests, protect it with an HMAC signature.
-// app.post('/register-purchase-and-download', async (req, res) => { ... });
+// Direct purchase registration and PDF download (no App Proxy)
+app.post('/register-purchase-and-download', async (req, res) => {
+  try {
+    const { puzzleId, orderId, crosswordImage, cluesImage } = req.body;
+
+    console.log('Direct PDF request:', { puzzleId, orderId, hasImage: !!crosswordImage });
+
+    if (!puzzleId || !orderId || !crosswordImage) {
+      return res.status(400).json({ error: 'Missing required data' });
+    }
+
+    // Register the purchase (same as webhook would do)
+    const purchaseRecord = {
+      orderId: String(orderId),
+      puzzleId: puzzleId,
+      crosswordImage: crosswordImage,
+      cluesImage: cluesImage || '',
+      purchasedAt: new Date().toISOString(),
+      method: 'direct'
+    };
+
+    PaidPuzzles.set(puzzleId, purchaseRecord);
+    console.log(`Registered direct purchase: ${puzzleId}`);
+
+    // Generate styled PDF immediately (1–2 pages)
+    const fetchMaybe = async (url) => (url ? fetchBuf(url) : null);
+    const [puzzleBuf, cluesBuf] = await Promise.all([
+      fetchMaybe(crosswordImage),
+      fetchMaybe(cluesImage)
+    ]);
+
+    const pdfBytes = await buildGridAndCluesPdf({
+      gridBuf: puzzleBuf || undefined,
+      cluesBuf: cluesBuf || undefined,
+      puzzleId
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="crossword-${puzzleId.slice(0,8)}.pdf"`);
+    return res.send(Buffer.from(pdfBytes));
+
+  } catch (error) {
+    console.error('Direct PDF generation failed:', error);
+    return res.status(500).json({ error: 'PDF generation failed' });
+  }
+});
 
 // Preview PDF with watermark (no authentication required)
 app.get('/preview-pdf', async (req, res) => {
   try {
     const imageUrl = String(req.query.imageUrl || '');
     const cluesUrl = String(req.query.cluesUrl || '');
-    
+
     if (!imageUrl) return res.status(400).send('Missing imageUrl');
-    
+
     const a4w = 595.28, a4h = 841.89;
     const margin = 36;
     const maxW = a4w - margin * 2;
     const maxH = a4h - margin * 2;
-    
-    const fetchBuf = async (url) => {
-      if (!url) return null;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error('Image fetch failed ' + r.status);
-      return Buffer.from(await r.arrayBuffer());
-    };
-    
+
+    const fetchMaybe = async (url) => (url ? fetchBuf(url) : null);
+
     const [puzzleBuf, cluesBuf] = await Promise.all([
-      fetchBuf(imageUrl),
-      cluesUrl ? fetchBuf(cluesUrl) : Promise.resolve(null)
+      fetchMaybe(imageUrl),
+      fetchMaybe(cluesUrl)
     ]);
-    
+
     const pdf = await PDFDocument.create();
-    
+
     const addImagePage = async (buf, withWatermark = true) => {
       const page = pdf.addPage([a4w, a4h]);
       if (buf) {
@@ -1359,15 +1436,15 @@ app.get('/preview-pdf', async (req, res) => {
         });
       }
     };
-    
+
     await addImagePage(puzzleBuf, true);
     await addImagePage(cluesBuf, true);
-    
+
     const pdfBytes = await pdf.save();
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="crossword-preview.pdf"');
     return res.send(Buffer.from(pdfBytes));
-    
+
   } catch (err) {
     console.error('Preview PDF failed:', err);
     return res.status(500).send('Preview failed');
@@ -1375,44 +1452,13 @@ app.get('/preview-pdf', async (req, res) => {
 });
 
 // === PDF claim & download (App Proxy style) ===
-// GET /apps/crossword/claim-pdf?puzzleId=...
-app.get('/apps/crossword/claim-pdf', async (req, res) => {
+app.get('/apps/crossword/claim-pdf', (req, res) => {
   try {
     const { puzzleId } = req.query;
     if (!puzzleId) return res.status(400).json({ ok: false, error: 'Missing puzzleId' });
 
-    let rec = PaidPuzzles.get(puzzleId);
-    if (!rec) {
-      // self-heal from Shopify if memory cache is empty
-      const order = await findPaidOrderByPuzzleId(String(puzzleId));
-      if (order) {
-        // extract images for this specific puzzle line item
-        let crosswordImage = '', cluesImage = '';
-        outer: for (const li of order.line_items || []) {
-          let isThis = false;
-          for (const p of li.properties || []) {
-            if (p?.name === '_puzzle_id' && String(p.value || '') === String(puzzleId)) { isThis = true; break; }
-          }
-          if (isThis) {
-            for (const p of li.properties || []) {
-              if (p?.name === '_custom_image')    crosswordImage = String(p.value || '');
-              if (p?.name === '_clues_image_url') cluesImage = String(p.value || '');
-            }
-            break outer;
-          }
-        }
-        rec = {
-          orderId: String(order.id),
-          email: (order.email || order.contact_email || order?.customer?.email || '') + '',
-          crosswordImage, cluesImage,
-          when: new Date().toISOString(),
-        };
-        PaidPuzzles.set(String(puzzleId), rec);
-      }
-    }
-    if (!rec) {
-      return res.status(404).json({ ok: false, error: 'No paid order found for this puzzleId' });
-    }
+    const rec = PaidPuzzles.get(puzzleId);
+    if (!rec) return res.status(404).json({ ok: false, error: 'No purchase found for this puzzleId' });
 
     const token = issuePdfToken(puzzleId, rec.orderId);
     return res.json({ ok: true, token });
@@ -1434,40 +1480,17 @@ app.get('/apps/crossword/download-pdf', async (req, res) => {
       return res.status(403).json({ error: 'Invalid token' });
     }
 
-    // Generate same PDF as before (grid + clues)
-    const a4w = 595.28, a4h = 841.89;
-    const margin = 36;
-    const maxW = a4w - margin * 2;
-    const maxH = a4h - margin * 2;
+    const fetchMaybe = async (url) => (url ? fetchBuf(url) : null);
 
-    const fetchBuf = async (url) => {
-      if (!url) return null;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(`Image fetch failed: ${r.status}`);
-      return Buffer.from(await r.arrayBuffer());
-    };
+    const puzzleBuf = await fetchMaybe(rec.crosswordImage);
+    const cluesBuf  = await fetchMaybe(rec.cluesImage);
 
-    const pdf = await PDFDocument.create();
+    const pdfBytes = await buildGridAndCluesPdf({
+      gridBuf: puzzleBuf || undefined,
+      cluesBuf: cluesBuf || undefined,
+      puzzleId
+    });
 
-    const addImagePage = async (buf) => {
-      if (!buf) return;
-      const isPng = buf[0] === 0x89 && buf[1] === 0x50;
-      const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
-      const { width, height } = img.size();
-      const scale = Math.min(maxW / width, maxH / height, 1);
-      const w = width * scale, h = height * scale;
-      const x = (a4w - w) / 2, y = (a4h - h) / 2;
-      const page = pdf.addPage([a4w, a4h]);
-      page.drawImage(img, { x, y, width: w, height: h });
-    };
-
-    const puzzleBuf = await fetchBuf(rec.crosswordImage);
-    const cluesBuf  = await fetchBuf(rec.cluesImage);
-
-    await addImagePage(puzzleBuf);
-    await addImagePage(cluesBuf);
-
-    const pdfBytes = await pdf.save();
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="crossword-${String(puzzleId).slice(0,8)}.pdf"`);
     return res.send(Buffer.from(pdfBytes));
@@ -1484,7 +1507,7 @@ const EXCLUDE_TITLE_RE = new RegExp(
   'i'
 );
 
-// Local constants for Printify REST calls (avoid BASE_URL/authHeaders())
+// Local constants for Printify REST calls
 const PRINTIFY_BASE = 'https://api.printify.com/v1';
 const SHOP_ID = process.env.PRINTIFY_SHOP_ID;
 const PIFY_HEADERS = {
@@ -1576,71 +1599,36 @@ async function verifyCatalogPair(blueprintId, printProviderId, variantId) {
 }
 
 // --- Try to read placeholder names (front/back/etc.) ---
-// VARIANT-AWARE: prefer per-variant placeholders, fallback to print_areas
-async function getVariantPlaceholderNames(blueprintId, printProviderId, variantId) {
-  // 1) Variant-level placeholders
-  try {
-    const url = `${PRINTIFY_BASE}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
-    const data = await safeFetch(url, { headers: PIFY_HEADERS });
+async function getVariantPlaceholderNames(blueprintId, printProviderId) {
+  const url = `${PRINTIFY_BASE}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/print_areas.json`;
+  const data = await safeFetch(url, { headers: PIFY_HEADERS });
 
-    const v = Array.isArray(data?.variants)
-      ? data.variants.find(x => Number(x.id) === Number(variantId))
-      : null;
+  const names = new Set();
+  const areas = Array.isArray(data?.print_areas) ? data.print_areas
+              : Array.isArray(data) ? data
+              : [];
 
-    if (v && Array.isArray(v.placeholders) && v.placeholders.length) {
-      const names = new Set();
-      for (const ph of v.placeholders) {
-        const val = (ph?.position || ph?.name || '').toString().trim().toLowerCase();
-        if (val) names.add(val);
-      }
-      if (names.size > 0) return Array.from(names);
+  for (const area of areas) {
+    const placeholders = area?.placeholders || area?.placeholders_json || area?.placeholdersList || [];
+    for (const ph of placeholders) {
+      const n = (ph?.name || ph)?.toString().trim().toLowerCase();
+      if (n) names.add(n);
     }
-  } catch (e) {
-    console.warn('getVariantPlaceholderNames (variant) failed:', e.message);
+    if (area?.name) names.add(String(area.name).trim().toLowerCase());
   }
 
-  // 2) Fallback: catalog print_areas (provider-wide)
-  try {
-    const url = `${PRINTIFY_BASE}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/print_areas.json`;
-    const data = await safeFetch(url, { headers: PIFY_HEADERS });
-
-    const names = new Set();
-    const areas = Array.isArray(data?.print_areas) ? data.print_areas
-                : Array.isArray(data)             ? data
-                : [];
-
-    for (const area of areas) {
-      // area-level name/position (rare but be permissive)
-      const areaName = (area?.name || area?.position || '').toString().trim().toLowerCase();
-      if (areaName) names.add(areaName);
-
-      const placeholders = area?.placeholders || area?.placeholders_json || area?.placeholdersList || [];
-      for (const ph of placeholders) {
-        const val = (ph?.position || ph?.name || '').toString().trim().toLowerCase();
-        if (val) names.add(val);
-      }
-    }
-
-    if (names.size > 0) return Array.from(names);
-  } catch (e) {
-    console.warn('getVariantPlaceholderNames (print_areas) failed:', e.message);
-  }
-
-  // Safe default
-  return ['front'];
+  if (names.size === 0) names.add('front'); // safe fallback
+  return Array.from(names);
 }
 
-// ======================= PRODUCT SPECS ROUTE =========================
-// GET /apps/crossword/product-specs/:variantId
-// Used by the editor to decide if a "back" side exists, and expose IDs.
 // ======================= PRODUCT SPECS ROUTE =========================
 app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
   try {
     const variantId = Number(req.params.variantId);
-    
+
     if (!variantId || isNaN(variantId)) {
-      return res.status(400).json({ 
-        ok: false, 
+      return res.status(400).json({
+        ok: false,
         error: 'Invalid variantId',
         received: req.params.variantId
       });
@@ -1650,9 +1638,9 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
 
     // Fetch all products (with filtering)
     const products = await fetchAllProductsPagedFiltered();
-    
+
     // Find product containing this variant
-    const product = products.find(p => 
+    const product = products.find(p =>
       p?.variants?.some(v => Number(v.id) === variantId)
     );
 
@@ -1699,15 +1687,15 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
       });
     }
 
-    // Get placeholder names (front, back, etc.) — VARIANT-AWARE
+    // Get placeholder names (front, back, etc.)
     let placeholders = ['front'];
     try {
-      placeholders = await getVariantPlaceholderNames(bp, pp, variantId);
+      placeholders = await getVariantPlaceholderNames(bp, pp);
     } catch (e) {
       console.warn(`⚠️ Could not fetch placeholders for ${variantId}, using fallback`);
     }
 
-    const hasBack = placeholders.some(n => 
+    const hasBack = placeholders.some(n =>
       /back|rear|reverse|backside|secondary|alt/i.test(n)
     );
 
@@ -1724,13 +1712,13 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
       print_provider_id: pp,
       placeholders,
       has_back: hasBack,
-      hasBack: hasBack  // Both formats for compatibility
+      hasBack: hasBack
     });
 
   } catch (err) {
     console.error('❌ product-specs error:', err);
-    return res.status(500).json({ 
-      ok: false, 
+    return res.status(500).json({
+      ok: false,
       error: err.message,
       has_back: false
     });
@@ -1738,7 +1726,6 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
 });
 
 // ======================= DEBUG: VARIANT LIVE =========================
-// e.g. GET /apps/crossword/debug/variant/105129/live
 app.get('/apps/crossword/debug/variant/:variantId/live', async (req, res) => {
   try {
     const variantId = Number(req.params.variantId);
@@ -1766,7 +1753,7 @@ app.get('/apps/crossword/debug/variant/:variantId/live', async (req, res) => {
   }
 });
 
-// [ADD] List Shopify variants that are missing from variantMap
+// [ADMIN] List Shopify variants that are missing from variantMap
 app.get('/admin/variant-map/gaps', async (req, res) => {
   try {
     const auth = req.headers.authorization;
@@ -1774,7 +1761,6 @@ app.get('/admin/variant-map/gaps', async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    // Pull Shopify products (minimal fields)
     const store = process.env.SHOPIFY_STORE;
     const pwd   = process.env.SHOPIFY_PASSWORD;
     const shopUrl = `https://${store}.myshopify.com/admin/api/2024-01/products.json?limit=250&fields=id,title,variants`;
