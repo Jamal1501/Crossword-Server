@@ -311,6 +311,7 @@ export async function createOrder({
   variantId,
   quantity = 1,
   position,
+  backPosition,
   recipient,
   printArea, // not used, but accepted
   meta       // not used, but accepted
@@ -452,6 +453,42 @@ if (uploadedBack) {
     y: 0.5,
     scale: 1,
     angle: 0
+  }];
+
+  // 🔧 Determine back placement & scale
+  const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
+  const bpScale =
+    typeof backPosition?.scale === 'number'
+      ? backPosition.scale
+      : (position?.scale ?? 1) * BACK_SCALE_MULT;
+
+  const bx = backPosition?.x ?? 0.5;
+  const by = backPosition?.y ?? 0.5;
+  const ba = backPosition?.angle ?? 0;
+
+  // Optionally constrain the back image so it fills the print area safely
+  let finalBackScale = bpScale;
+  try {
+    const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
+    finalBackScale = clampContainScale({
+      Aw: ph?.width,
+      Ah: ph?.height,
+      Iw: uploadedBack?.width,
+      Ih: uploadedBack?.height,
+      requested: bpScale,
+    });
+  } catch (e) {
+    console.warn('⚠️ Contain-scale calc failed (back):', e.message);
+  }
+
+  printAreas[backKey] = [{
+    src: backSrc,
+    image_url: backSrc,
+    position: backKey,
+    x: bx,
+    y: by,
+    scale: finalBackScale,
+    angle: ba,
   }];
 }
 
