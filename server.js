@@ -12,7 +12,7 @@ import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import axios from 'axios';
 
 dotenv.config();
@@ -161,7 +161,7 @@ async function fetchBuf(url) {
 
 // Optional brand assets loader (logo + font)
 async function prepareBrandAssets(pdf) {
-  const out = { logoImg: null, font: null };
+  const out = { logoImg: null, font: undefined };
   try {
     const logoUrl = process.env.PDF_LOGO_URL || '';
     if (logoUrl) {
