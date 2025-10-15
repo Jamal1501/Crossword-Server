@@ -175,7 +175,6 @@ function verifyPdfToken(puzzleId, orderId, token) {
   return token && token === issuePdfToken(puzzleId, orderId);
 }
 
-
 // ---- Email + PDF helpers (clues-only) ----
 async function fetchBuf(url) {
   const r = await fetch(url);
@@ -261,6 +260,92 @@ function verifyAppProxy(req) {
   return digest === sig;
 }
 
+// --- Resolve buyer email robustly -----------------------------------
+async function resolveBuyerEmail(order) {
+  try {
+    const pick = (...arr) => arr.find(e => typeof e === 'string' && e.includes('@'));
+
+    // 1) from line-item properties (theme can set _buyer_email)
+    const propEmails = [];
+    for (const li of (order.line_items || [])) {
+      for (const p of (li.properties || [])) {
+        if (!p) continue;
+        const n = String(p.name || '').toLowerCase();
+        const v = String(p.value || '');
+        if (['_buyer_email', 'buyer_email', 'email'].includes(n) && v.includes('@')) {
+          propEmails.push(v);
+        }
+      }
+    }
+
+    // 2) common order fields
+    let to = pick(
+      order.email,
+      order.contact_email,
+      order?.customer?.email,
+      order?.billing_address?.email,
+      order?.shipping_address?.email,
+      ...propEmails
+    );
+    if (to) return to;
+
+    // 3) Shopify Admin lookup (if we have a customer id)
+    if (order?.customer?.id && process.env.SHOPIFY_STORE && process.env.SHOPIFY_PASSWORD) {
+      const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/customers/${order.customer.id}.json`;
+      const resp = await fetch(url, { headers: { 'X-Shopify-Access-Token': process.env.SHOPIFY_PASSWORD } });
+      if (resp.ok) {
+        const data = await resp.json();
+        const adminEmail = data?.customer?.email || data?.customer?.verified_email || '';
+        if (adminEmail && adminEmail.includes('@')) return adminEmail;
+      } else {
+        console.warn('resolveBuyerEmail: admin customer fetch failed', resp.status);
+      }
+    }
+
+    return '';
+  } catch (e) {
+    console.warn('resolveBuyerEmail failed:', e.message);
+    return '';
+  }
+}
+
+// --- Find a paid order by puzzleId (for claim self-heal) ------------
+async function findPaidOrderByPuzzleId(puzzleId) {
+  const store = process.env.SHOPIFY_STORE;
+  const token = process.env.SHOPIFY_PASSWORD;
+  if (!store || !token) return null;
+
+  const base = `https://${store}.myshopify.com/admin/api/2024-01`;
+  let pageInfo = null;
+
+  for (let i = 0; i < 5; i++) { // up to 5 pages of recent orders
+    const url = `${base}/orders.json?status=any&limit=250${pageInfo ? `&page_info=${pageInfo}` : ''}&fields=id,email,contact_email,customer,financial_status,line_items`;
+    const r = await fetch(url, { headers: { 'X-Shopify-Access-Token': token } });
+    if (!r.ok) {
+      console.warn('Shopify orders fetch failed:', r.status);
+      return null;
+    }
+    const data = await r.json();
+    const orders = data?.orders || [];
+
+    for (const o of orders) {
+      if (!['paid', 'partially_paid'].includes(o.financial_status)) continue;
+
+      for (const li of (o.line_items || [])) {
+        const props = li.properties || [];
+        const has = props.some(p => p?.name === '_puzzle_id' && String(p.value || '') === String(puzzleId));
+        if (has) return o;
+      }
+    }
+
+    // Pagination via Link header
+    const link = r.headers.get('link') || '';
+    const next = /<[^>]*page_info=([^&>]+)[^>]*>; rel="next"/.exec(link);
+    if (next) pageInfo = next[1]; else break;
+  }
+  return null;
+}
+
 async function handlePrintifyOrder(order) {
   // Flatten useful fields from Shopify line items
   const items = order.line_items.map((li) => {
@@ -278,7 +363,7 @@ async function handlePrintifyOrder(order) {
 
     return {
       title: li.title,                           // Shopify line item title
-      variant_title: li.variant_title || '',     // <-- add this so logs/lookup are correct
+      variant_title: li.variant_title || '',
       variant_id: li.variant_id,                 // Shopify variant ID
       quantity: li.quantity || 1,
       custom_image,
@@ -296,18 +381,18 @@ async function handlePrintifyOrder(order) {
       continue;
     }
 
-    // ✅ FIX: define shopifyVid and consolidate runtime lookup block
     const shopifyVid = String(item.variant_id);
     let printifyVariantId = variantMap[shopifyVid];
 
     if (!printifyVariantId) {
       console.warn(`⛔ No Printify mapping for Shopify variant ${shopifyVid}. Attempting runtime lookup...`,
-                   { product: item.title, variant_title: item.variant_title });
+        { product: item.title, variant_title: item.variant_title });
 
       const lookedUp = await lookupPrintifyVariantIdByTitles(item.title, item.variant_title);
       if (lookedUp) {
         printifyVariantId = lookedUp;
-        variantMap[shopifyVid] = lookedUp; // cache for this process
+        // cache it in memory and persist to file
+        variantMap[shopifyVid] = lookedUp;
         console.log('✅ Runtime variant lookup succeeded:', { shopifyVid, printifyVariantId: lookedUp });
         try {
           await fs.writeFile('./variant-map.json', JSON.stringify(variantMap, null, 2));
@@ -360,14 +445,14 @@ async function handlePrintifyOrder(order) {
       country: order.shipping_address?.country_code || ''
     };
 
-    // 🔹 Only send back image to Printify if user chose to print clues on back
+    // Only send back image to Printify if user chose to print clues on back
     const backImageUrl =
       item.clue_output_mode === 'back' && item.clues_image_url ? item.clues_image_url : undefined;
 
     try {
       const response = await createOrder({
         imageUrl: item.custom_image,
-        backImageUrl,                     // ✅ NEW: pass back image for printing on back (when selected)
+        backImageUrl,
         variantId: printifyVariantId,
         quantity: item.quantity,
         position,
@@ -381,7 +466,6 @@ async function handlePrintifyOrder(order) {
     }
   }
 }
-
 
 app.post('/webhooks/orders/create', async (req, res) => {
   // req.body is a Buffer because of bodyParser.raw() mounted earlier for this path
@@ -446,11 +530,15 @@ app.post('/webhooks/orders/create', async (req, res) => {
   }
 
   await handlePrintifyOrder(order);
+
   // After placing the Printify order, email clues PDF for "postcard" mode
   try {
-    const to = [order.email, order.contact_email, order?.customer?.email]
-      .map(e => (e || '').trim())
-      .find(e => e.includes('@')) || '';
+    let to = await resolveBuyerEmail(order);
+    if (!to && process.env.EMAIL_FALLBACK_TO) {
+      console.warn('No buyer email on order; using EMAIL_FALLBACK_TO for clues PDF.');
+      to = process.env.EMAIL_FALLBACK_TO;
+    }
+
     if (to) {
       const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
       const sent = new Set();
@@ -478,14 +566,13 @@ app.post('/webhooks/orders/create', async (req, res) => {
         console.log('📧 Sent clues PDF email for puzzle', pid, 'to', to);
       }
     } else {
-      console.warn('No buyer email on order; skipping clues email.');
+      console.warn('No buyer email on order and no EMAIL_FALLBACK_TO; skipping clues email.');
     }
   } catch (e) {
     console.error('❌ clues-email failed:', e);
   }
 
   return res.status(200).send('Webhook received');
-
 });
 
 // ── Cloudinary config (standalone, not wrapped in extra parens) ────────────────
@@ -494,7 +581,6 @@ cloudinary.config({
   api_key:    process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
-
 
 app.post('/admin/generate-variant-map', async (req, res) => {
   try {
@@ -563,7 +649,7 @@ app.post('/api/printify/order', async (req, res) => {
   try {
     const {
       imageUrl,
-      backImageUrl,          // ✅ NEW
+      backImageUrl,          // can be dropped if variant has no back
       base64Image,
       variantId,
       position,
@@ -611,7 +697,7 @@ app.post('/api/printify/order', async (req, res) => {
 
     const order = await createOrder({
       imageUrl,
-      backImageUrl: backUrl,    // ✅ use filtered value
+      backImageUrl: backUrl,
       base64Image,
       variantId,
       quantity,
@@ -625,7 +711,6 @@ app.post('/api/printify/order', async (req, res) => {
     res.status(500).json({ error: 'Order creation failed', details: err.message });
   }
 });
-
 
 // Explicit preflight + CORS for this route (belt & suspenders)
 app.options('/save-crossword', cors(corsOptions));
@@ -686,8 +771,6 @@ app.post('/api/printify/order-from-url', async (req, res) => {
     res.status(500).json({ error: 'Order creation failed', details: err.message });
   }
 });
-
-
 
 app.get('/products', async (req, res) => {
   try {
@@ -828,13 +911,13 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
   try {
     const { imageUrl, productId, variantId } = req.query;
 
-    const backImageUrl = req.query.backImageUrl; // [ADD]
+    const backImageUrl = req.query.backImageUrl;
     const position = {
       x: req.query.x ? parseFloat(req.query.x) : 0.5,
       y: req.query.y ? parseFloat(req.query.y) : 0.5,
       scale: req.query.scale ? parseFloat(req.query.scale) : 1,
       angle: req.query.angle ? parseFloat(req.query.angle) : 0,
-    }
+    };
     const backPosition = {
       x: req.query.x ? parseFloat(req.query.x) : 0.5,
       y: req.query.y ? parseFloat(req.query.y) : 0.5,
@@ -842,14 +925,13 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
       angle: req.query.angle ? parseFloat(req.query.angle) : 0,
     };
 
-    
     if (!imageUrl || !productId || !variantId) {
       return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
     }
 
     // 1. Upload the crossword image
     const uploaded = await uploadImageFromUrl(imageUrl);
-    let uploadedBack = null; // [ADD]
+    let uploadedBack = null;
     if (backImageUrl) {
       uploadedBack = await uploadImageFromUrl(backImageUrl);
     }
@@ -993,32 +1075,28 @@ process.on('SIGTERM', () => {
 
 const PRINTIFY_API_KEY = process.env.PRINTIFY_API_KEY;
 
-// ✅ FIX: Replace /preview route to use shop product endpoint (valid) and pick enabled variant
 app.get('/preview', async (req, res) => {
-  try {
-    const { productId, image, x = 0, y = 0, width = 300, height = 300 } = req.query;
-    if (!productId || !image) {
-      return res.status(400).json({ error: 'Missing productId or image' });
-    }
+  console.log('Received /preview request:', req.query); // Log the request
 
-    const shopId = process.env.PRINTIFY_SHOP_ID;
-    const prodRes = await fetch(
-      `https://api.printify.com/v1/shops/${shopId}/products/${productId}.json`,
-      { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
-    );
-    if (!prodRes.ok) {
-      const t = await prodRes.text().catch(() => '');
-      return res.status(prodRes.status).json({ error: 'Printify product fetch failed', details: t });
-    }
-    const prod = await prodRes.json();
-    const firstEnabled = (prod.variants || []).find(v => v.is_enabled !== false) || (prod.variants || [])[0];
-    if (!firstEnabled) {
-      return res.status(404).json({ error: 'No enabled variants found for product' });
-    }
+  const { productId, image, x = 0, y = 0, width = 300, height = 300 } = req.query;
+
+  if (!productId || !image) {
+    return res.status(400).json({ error: 'Missing productId or image' });
+  }
+
+  try {
+    console.log('PRINTIFY_API_KEY:', process.env.PRINTIFY_API_KEY); // Log the API key
+
+    // Fetch the first enabled variant for this product (catalog endpoint is fine for quick previews)
+    const variantsRes = await fetch(`https://api.printify.com/v1/catalog/products/${productId}/variants.json`, {
+      headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` }
+    });
+    const variants = await variantsRes.json();
+    const firstEnabled = variants.variants?.find(v => v.is_enabled) || variants.variants?.[0];
 
     const payload = {
       product_id: parseInt(productId),
-      variant_ids: [Number(firstEnabled.id)],
+      variant_ids: [firstEnabled?.id || 1],
       files: [
         {
           placement: 'front',
@@ -1033,6 +1111,8 @@ app.get('/preview', async (req, res) => {
       payload,
       { headers: { Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}` } }
     );
+
+    console.log('Printify API response:', previewRes.data); // Log the Printify API response
 
     res.json({ previewUrl: previewRes.data.preview_url });
   } catch (err) {
@@ -1225,82 +1305,10 @@ app.get("/apps/crossword/all-print-areas", async (req, res) => {
 
 // Clean server code without App Proxy dependencies
 
-// Direct purchase registration and PDF download (no App Proxy)
-app.post('/register-purchase-and-download', async (req, res) => {
-  try {
-    const { puzzleId, orderId, crosswordImage, cluesImage } = req.body;
-    
-    console.log('Direct PDF request:', { puzzleId, orderId, hasImage: !!crosswordImage });
-    
-    if (!puzzleId || !orderId || !crosswordImage) {
-      return res.status(400).json({ error: 'Missing required data' });
-    }
-    
-    // Register the purchase (same as webhook would do)
-    const purchaseRecord = {
-      orderId: String(orderId),
-      puzzleId: puzzleId,
-      crosswordImage: crosswordImage,
-      cluesImage: cluesImage || '',
-      purchasedAt: new Date().toISOString(),
-      method: 'direct'
-    };
-    
-    PaidPuzzles.set(puzzleId, purchaseRecord);
-    console.log(`Registered direct purchase: ${puzzleId}`);
-    
-    // Generate PDF immediately
-    const a4w = 595.28, a4h = 841.89;
-    const margin = 36;
-    const maxW = a4w - margin * 2;
-    const maxH = a4h - margin * 2;
-    
-    const fetchBuf = async (url) => {
-      if (!url) return null;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(`Image fetch failed: ${r.status}`);
-      return Buffer.from(await r.arrayBuffer());
-    };
-    
-    const [puzzleBuf, cluesBuf] = await Promise.all([
-      fetchBuf(crosswordImage),
-      cluesImage ? fetchBuf(cluesImage) : Promise.resolve(null)
-    ]);
-    
-    if (!puzzleBuf) {
-      return res.status(422).json({ error: 'Could not fetch crossword image' });
-    }
-    
-    const pdf = await PDFDocument.create();
-    
-    const addImagePage = async (buf) => {
-      if (!buf) return;
-      const isPng = buf[0] === 0x89 && buf[1] === 0x50;
-      const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
-      const { width, height } = img.size();
-      
-      const scale = Math.min(maxW / width, maxH / height, 1);
-      const w = width * scale, h = height * scale;
-      const x = (a4w - w) / 2, y = (a4h - h) / 2;
-      
-      const page = pdf.addPage([a4w, a4h]);
-      page.drawImage(img, { x, y, width: w, height: h });
-    };
-    
-    await addImagePage(puzzleBuf);
-    await addImagePage(cluesBuf);
-    
-    const pdfBytes = await pdf.save();
-    
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="crossword-${puzzleId.slice(0,8)}.pdf"`);
-    return res.send(Buffer.from(pdfBytes));
-    
-  } catch (error) {
-    console.error('Direct PDF generation failed:', error);
-    return res.status(500).json({ error: 'PDF generation failed' });
-  }
-});
+// ❌ Removed: Direct purchase registration and PDF download (no App Proxy)
+// This endpoint bypassed purchase gating. Keep disabled in production.
+// If you need it for internal tests, protect it with an HMAC signature.
+// app.post('/register-purchase-and-download', async (req, res) => { ... });
 
 // Preview PDF with watermark (no authentication required)
 app.get('/preview-pdf', async (req, res) => {
@@ -1368,13 +1376,43 @@ app.get('/preview-pdf', async (req, res) => {
 
 // === PDF claim & download (App Proxy style) ===
 // GET /apps/crossword/claim-pdf?puzzleId=...
-app.get('/apps/crossword/claim-pdf', (req, res) => {
+app.get('/apps/crossword/claim-pdf', async (req, res) => {
   try {
     const { puzzleId } = req.query;
     if (!puzzleId) return res.status(400).json({ ok: false, error: 'Missing puzzleId' });
 
-    const rec = PaidPuzzles.get(puzzleId);
-    if (!rec) return res.status(404).json({ ok: false, error: 'No purchase found for this puzzleId' });
+    let rec = PaidPuzzles.get(puzzleId);
+    if (!rec) {
+      // self-heal from Shopify if memory cache is empty
+      const order = await findPaidOrderByPuzzleId(String(puzzleId));
+      if (order) {
+        // extract images for this specific puzzle line item
+        let crosswordImage = '', cluesImage = '';
+        outer: for (const li of order.line_items || []) {
+          let isThis = false;
+          for (const p of li.properties || []) {
+            if (p?.name === '_puzzle_id' && String(p.value || '') === String(puzzleId)) { isThis = true; break; }
+          }
+          if (isThis) {
+            for (const p of li.properties || []) {
+              if (p?.name === '_custom_image')    crosswordImage = String(p.value || '');
+              if (p?.name === '_clues_image_url') cluesImage = String(p.value || '');
+            }
+            break outer;
+          }
+        }
+        rec = {
+          orderId: String(order.id),
+          email: (order.email || order.contact_email || order?.customer?.email || '') + '',
+          crosswordImage, cluesImage,
+          when: new Date().toISOString(),
+        };
+        PaidPuzzles.set(String(puzzleId), rec);
+      }
+    }
+    if (!rec) {
+      return res.status(404).json({ ok: false, error: 'No paid order found for this puzzleId' });
+    }
 
     const token = issuePdfToken(puzzleId, rec.orderId);
     return res.json({ ok: true, token });
@@ -1383,7 +1421,6 @@ app.get('/apps/crossword/claim-pdf', (req, res) => {
     return res.status(500).json({ ok: false, error: 'Internal error' });
   }
 });
-
 
 app.get('/apps/crossword/download-pdf', async (req, res) => {
   try {
@@ -1397,7 +1434,7 @@ app.get('/apps/crossword/download-pdf', async (req, res) => {
       return res.status(403).json({ error: 'Invalid token' });
     }
 
-    // Generate same PDF as /register-purchase-and-download
+    // Generate same PDF as before (grid + clues)
     const a4w = 595.28, a4h = 841.89;
     const margin = 36;
     const maxW = a4w - margin * 2;
@@ -1502,7 +1539,6 @@ async function lookupPrintifyVariantIdByTitles(shopTitle, variantTitle) {
   }
 }
 
-
 // --- Paged, filtered shop product fetch ---
 async function fetchAllProductsPagedFiltered() {
   const all = [];
@@ -1540,9 +1576,9 @@ async function verifyCatalogPair(blueprintId, printProviderId, variantId) {
 }
 
 // --- Try to read placeholder names (front/back/etc.) ---
-// Make this VARIANT-AWARE (prefer the specific variant, then fall back to print_areas)
+// VARIANT-AWARE: prefer per-variant placeholders, fallback to print_areas
 async function getVariantPlaceholderNames(blueprintId, printProviderId, variantId) {
-  // 1) Prefer variant-level placeholders (accurate per-variant)
+  // 1) Variant-level placeholders
   try {
     const url = `${PRINTIFY_BASE}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
     const data = await safeFetch(url, { headers: PIFY_HEADERS });
@@ -1593,8 +1629,6 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId, variantI
   // Safe default
   return ['front'];
 }
-
-
 
 // ======================= PRODUCT SPECS ROUTE =========================
 // GET /apps/crossword/product-specs/:variantId
@@ -1665,7 +1699,7 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
       });
     }
 
-    // Get placeholder names (front, back, etc.)
+    // Get placeholder names (front, back, etc.) — VARIANT-AWARE
     let placeholders = ['front'];
     try {
       placeholders = await getVariantPlaceholderNames(bp, pp, variantId);
