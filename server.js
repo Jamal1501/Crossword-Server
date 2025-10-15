@@ -473,7 +473,11 @@ async function handlePrintifyOrder(order) {
       x = Math.min(1, Math.max(0, (leftPx + imgW / 2) / area.width));
       y = Math.min(1, Math.max(0, (topPx  + imgH / 2) / area.height));
     }
-    const position = { x, y, scale, angle: 0 };
+   const position = { x, y, scale, angle: 0 };
+    // Use same placement for back (or allow a multiplier via env)
+    const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
+    const backScale = Math.max(0.1, Math.min(2, scale * BACK_SCALE_MULT));
+    const backPosition = { x: 0.5, y: 0.5, scale: backScale, angle: 0 };
 
     const recipient = {
       name: `${order.shipping_address?.first_name || ''} ${order.shipping_address?.last_name || ''}`.trim(),
@@ -496,6 +500,7 @@ async function handlePrintifyOrder(order) {
         variantId: printifyVariantId,
         quantity: item.quantity,
         position,
+        backPosition,
         recipient,
         printArea: area || undefined,
         meta: { shopifyVid, title: item.title }
@@ -717,6 +722,7 @@ app.post('/api/printify/order', async (req, res) => {
       base64Image,
       variantId,
       position,
+      backPosition,
       recipient,
       quantity,
       orderId
@@ -763,6 +769,7 @@ app.post('/api/printify/order', async (req, res) => {
       variantId,
       quantity,
       position,
+      backPosition,
       recipient
     });
 
@@ -797,7 +804,7 @@ app.post('/save-crossword', cors(corsOptions), async (req, res) => {
 
 app.post('/api/printify/order-from-url', async (req, res) => {
   try {
-    const { cloudinaryUrl, backImageUrl, variantId, position, recipient, quantity } = req.body;
+    const { cloudinaryUrl, backImageUrl, variantId, position, backPosition, recipient, quantity } = req.body;
 
     if (!cloudinaryUrl || !variantId || !recipient) {
       return res.status(400).json({ error: 'Missing required fields: cloudinaryUrl, variantId, recipient', success: false });
@@ -824,6 +831,7 @@ app.post('/api/printify/order-from-url', async (req, res) => {
       variantId,
       quantity,
       position,
+      backPosition,
       recipient
     });
 
