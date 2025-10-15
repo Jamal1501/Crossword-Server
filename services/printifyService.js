@@ -171,12 +171,15 @@ async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
   return ph ? { width: ph.width, height: ph.height } : null;
 }
 
+// Allow images to enlarge if they're smaller than the print area
 function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
   if (!Aw || !Ah || !Iw || !Ih) return requested ?? 1;
-  const capByHeight = (Ah * Iw) / (Aw * Ih);
-  const maxScale = Math.min(1, capByHeight);
-  return Math.min(requested ?? 1, maxScale);
+  const containScale = Math.min(Aw / Iw, Ah / Ih);
+  // keep the requested multiplier but don't force a max of 1
+  const final = containScale * (requested ?? 1);
+  return final;
 }
+
 
 /* --------------------------
    Upload helpers
