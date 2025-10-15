@@ -579,61 +579,71 @@ app.post('/webhooks/orders/create', async (req, res) => {
   await handlePrintifyOrder(order);
 
   // === NEW: Email FULL (grid + clues) PDF to buyer, once per puzzle ===
+  // === SMART EMAIL LOGIC: Send CLUES-only if product is physical ===
   try {
     const to =
       [order.email, order.contact_email, order?.customer?.email, process.env.EMAIL_FALLBACK_TO]
-      .map(e => (e || '').trim())
-      .find(e => e.includes('@')) || '';
+        .map(e => (e || '').trim())
+        .find(e => e.includes('@')) || '';
 
-    if (to) {
-      const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
-      const sent = new Set();
+    if (!to) {
+      console.warn('No buyer email on order; skipping PDF email.');
+      return res.status(200).send('Webhook received (no email)');
+    }
 
-      for (const li of lineItems) {
-        const props = Array.isArray(li.properties) ? li.properties : [];
-        const getProp = (name) => {
-          const p = props.find(x => x && x.name === name);
-          return p ? String(p.value || '') : '';
-        };
+    const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+    const sent = new Set();
 
-        const pid    = getProp('_puzzle_id');
-        const grid   = getProp('_custom_image');     // crossword image URL
-        const clues  = getProp('_clues_image_url');  // clues image URL
+    for (const li of lineItems) {
+      const props = Array.isArray(li.properties) ? li.properties : [];
+      const getProp = (name) => {
+        const p = props.find(x => x && x.name === name);
+        return p ? String(p.value || '') : '';
+      };
 
-        if (!pid || sent.has(pid)) continue;
-        if (!grid && !clues) continue; // nothing to render
+      const pid   = getProp('_puzzle_id');
+      const grid  = getProp('_custom_image');
+      const clues = getProp('_clues_image_url');
+      const shopVid = String(li.variant_id || '');
 
-        // Fetch image buffers (if available)
+      if (!pid || sent.has(pid)) continue;
+
+      // 🔍 check if this line item is linked to a physical Printify product
+      const isPhysical = !!variantMap[shopVid];
+
+      let pdfBuffer;
+      if (isPhysical && clues) {
+        console.log(`📦 Sending CLUES-only PDF for puzzle ${pid}`);
+        pdfBuffer = await buildCluesPdfOnly(clues);
+      } else {
+        console.log(`💾 Sending FULL PDF (grid+clues) for puzzle ${pid}`);
         const [gridBuf, cluesBuf] = await Promise.all([
           grid ? fetchBuf(grid) : Promise.resolve(null),
           clues ? fetchBuf(clues) : Promise.resolve(null)
         ]);
-
-        const pdfBytes = await buildGridAndCluesPdf({
+        pdfBuffer = await buildGridAndCluesPdf({
           gridBuf: gridBuf || undefined,
           cluesBuf: cluesBuf || undefined,
           puzzleId: pid
         });
-
-        await sendEmailWithAttachment({
-          to,
-          subject: 'Your printable crossword (PDF)',
-          html: `<p>Thanks for your purchase!</p>
-                 <p>Your printable PDF for puzzle <strong>${String(pid).slice(0,8)}</strong> is attached.</p>`,
-          filename: `crossword-${String(pid).slice(0,8)}.pdf`,
-          pdfBuffer: Buffer.from(pdfBytes)
-        });
-
-        sent.add(pid);
-        console.log('📧 Sent FULL PDF email for puzzle', pid, 'to', to);
       }
-    } else {
-      console.warn('No buyer email on order; skipping full PDF email.');
+
+      await sendEmailWithAttachment({
+        to,
+        subject: isPhysical
+          ? 'Your crossword clues (PDF)'
+          : 'Your printable crossword (PDF)',
+        html: `<p>Thanks for your purchase!</p>
+               <p>Your ${isPhysical ? 'clues' : 'full'} PDF for puzzle <strong>${String(pid).slice(0,8)}</strong> is attached.</p>`,
+        filename: `${isPhysical ? 'clues' : 'crossword'}-${String(pid).slice(0,8)}.pdf`,
+        pdfBuffer
+      });
+
+      sent.add(pid);
     }
   } catch (e) {
-    console.error('❌ full-pdf-email failed:', e);
+    console.error('❌ smart-pdf-email failed:', e);
   }
-
   return res.status(200).send('Webhook received');
 });
 
