@@ -395,98 +395,87 @@ export async function createOrder({
     console.warn('⚠️ Contain-scale calc failed (front):', e.message);
   }
 
-  // 5) Build placeholders for ORDERS API (must use upload IDs, not URLs)
-  const frontId = uploadedFront?.id;
+// 5) Build print_areas map for ORDERS endpoint (expects src + coords)
+const frontSrc =
+  uploadedFront?.file_url ||
+  uploadedFront?.preview_url ||
+  uploadedFront?.url ||
+  uploadedFront; // fallback string
 
-  // discover which placeholders this variant requires (e.g. ["front","front_cover"])
-  let requiredPlaceholders = ['front'];
-  try {
-    requiredPlaceholders = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
-    if (!Array.isArray(requiredPlaceholders) || requiredPlaceholders.length === 0) {
-      requiredPlaceholders = ['front'];
-    }
-  } catch (e) {
+let requiredPlaceholders = ['front'];
+try {
+  requiredPlaceholders = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
+  if (!Array.isArray(requiredPlaceholders) || requiredPlaceholders.length === 0) {
     requiredPlaceholders = ['front'];
   }
+} catch {
+  requiredPlaceholders = ['front'];
+}
 
-  // Build placeholders (no duplicates, exactly one entry per slot)
-  const placeholders = [];
+// FRONT area (always)
+const printAreas = {
+  front: [{
+    src: frontSrc,
+    x: position?.x ?? 0.5,
+    y: position?.y ?? 0.5,
+    scale: finalScale,
+    angle: position?.angle ?? 0,
+  }],
+};
 
-  // FRONT (always)
-  placeholders.push({
-    position: 'front',
-    images: [{
-      id: frontId,
-      x: position?.x ?? 0.5,
-      y: position?.y ?? 0.5,
-      scale: finalScale,
-      angle: position?.angle ?? 0,
-    }],
-  });
+// FRONT-COVER clone if needed
+if (requiredPlaceholders.includes('front_cover')) {
+  printAreas.front_cover = [{
+    src: frontSrc,
+    x: position?.x ?? 0.5,
+    y: position?.y ?? 0.5,
+    scale: finalScale,
+    angle: position?.angle ?? 0,
+  }];
+}
 
-  // If blueprint demands "front_cover", add it once
-  if (requiredPlaceholders.includes('front_cover')) {
-    placeholders.push({
-      position: 'front_cover',
-      images: [{
-        id: frontId,
-        x: position?.x ?? 0.5,
-        y: position?.y ?? 0.5,
-        scale: finalScale,
-        angle: position?.angle ?? 0,
-      }],
+// BACK area (only if provided)
+if (uploadedBack) {
+  const backSrc =
+    uploadedBack?.file_url ||
+    uploadedBack?.preview_url ||
+    uploadedBack?.url ||
+    uploadedBack;
+
+  const nonFront = requiredPlaceholders.filter(n => n !== 'front' && n !== 'front_cover');
+  const backKey = requiredPlaceholders.includes('back') ? 'back' : (nonFront[0] || 'back');
+
+  const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
+  const bx = backPosition?.x ?? 0.5;
+  const by = backPosition?.y ?? 0.5;
+  const ba = backPosition?.angle ?? 0;
+  const requestedBack =
+    (typeof backPosition?.scale === 'number' ? backPosition.scale : (position?.scale ?? 1)) * BACK_SCALE_MULT;
+
+  let finalBackScale = requestedBack;
+  try {
+    const ph = await getVariantPlaceholderByPos(blueprintId, printProviderId, parseInt(variantId), backKey);
+    finalBackScale = clampContainScale({
+      Aw: ph?.width,
+      Ah: ph?.height,
+      Iw: uploadedBack?.width,
+      Ih: uploadedBack?.height,
+      requested: requestedBack,
     });
+    console.log('🧮 Back scale', { backKey, requestedBack, finalBackScale });
+  } catch (e) {
+    console.warn('⚠️ Contain-scale calc failed (back):', e.message);
   }
 
-  // BACK (only if provided/supported)
-  if (uploadedBack) {
-    const backId = uploadedBack?.id;
+  printAreas[backKey] = [{
+    src: backSrc,
+    x: bx,
+    y: by,
+    scale: finalBackScale,
+    angle: ba,
+  }];
+}
 
-    // Prefer "back". If not present, use first non-front/cover placeholder, else 'back'.
-    const nonFront = requiredPlaceholders.filter(n => n !== 'front' && n !== 'front_cover');
-    const backKey = requiredPlaceholders.includes('back') ? 'back' : (nonFront[0] || 'back');
-
-    const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
-    const bx = backPosition?.x ?? 0.5;
-    const by = backPosition?.y ?? 0.5;
-    const ba = backPosition?.angle ?? 0;
-    const requestedBack =
-      (typeof backPosition?.scale === 'number' ? backPosition.scale : (position?.scale ?? 1)) * BACK_SCALE_MULT;
-
-    // contain using the actual back placeholder’s box
-    let finalBackScale = requestedBack;
-    try {
-      const ph = await getVariantPlaceholderByPos(blueprintId, printProviderId, parseInt(variantId), backKey);
-      finalBackScale = clampContainScale({
-        Aw: ph?.width,
-        Ah: ph?.height,
-        Iw: uploadedBack?.width,
-        Ih: uploadedBack?.height,
-        requested: requestedBack,
-      });
-console.log('🧮 Back scale', {
-  backKey,
-  Aw: ph?.width,
-  Ah: ph?.height,
-  Iw: uploadedBack?.width,
-  Ih: uploadedBack?.height,
-  requestedBack,
-  finalBackScale,
-});    } catch (e) {
-      console.warn('⚠️ Contain-scale calc failed (back):', e.message);
-    }
-
-    placeholders.push({
-      position: backKey,
-      images: [{
-        id: backId,
-        x: bx,
-        y: by,
-        scale: finalBackScale,
-        angle: ba,
-      }],
-    });
-  }
 
   // 6) Final order payload (print_areas as array with one object that has placeholders)
   const payload = {
