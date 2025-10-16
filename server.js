@@ -238,7 +238,7 @@ async function buildCluesPdfOnly(cluesUrl) {
   const isPng = buf[0] === 0x89 && buf[1] === 0x50;
   const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
   const { width, height } = img.size();
-  const scale = Math.min(maxW / width, maxH / height, 0.9);
+  const scale = Math.min(maxW / width, maxH / height, 1.9);
   const w = width * scale, h = height * scale;
   const x = (a4w - w) / 2;
   const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
