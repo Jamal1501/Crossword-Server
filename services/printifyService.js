@@ -486,10 +486,7 @@ if (uploadedBack) {
       quantity: Math.max(1, Number(quantity) || 1),
       print_provider_id: printProviderId,
       blueprint_id: blueprintId,
-      print_areas: [{
-        variant_ids: [parseInt(variantId)],
-        placeholders
-      }]
+      print_areas: printAreas
     }],
     shipping_method: 1,
     send_shipping_notification: true,
