@@ -183,73 +183,9 @@ async function prepareBrandAssets(pdf) {
   return out;
 }
 
-// Styled 1-page CLUES PDF (email attachment)
-async function buildCluesPdfOnly(cluesUrl) {
-  const a4w = 595.28, a4h = 841.89;
-  const margin = 36;
-  const headerH = 38;
-  const footerH = 26;
-  const innerTop = margin + headerH + 10;
-  const innerBottom = margin + footerH + 10;
 
-  const maxW = a4w - margin * 2;
-  const maxH = a4h - innerTop - innerBottom;
-
-  const pdf = await PDFDocument.create();
-  const page = pdf.addPage([a4w, a4h]);
-  const { logoImg, font } = await prepareBrandAssets(pdf);
-
-  // Optional branded background
-  const bgUrl = process.env.PDF_CLUES_BG_URL || process.env.PDF_BRAND_BG_URL || '';
-  if (bgUrl) {
-    try {
-      const bgBuf = await fetchBuf(bgUrl);
-      const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
-      page.drawImage(bgImg, { x: 0, y: 0, width: a4w, height: a4h });
-    } catch (e) {
-      console.warn('PDF bg load failed:', e.message);
-    }
-  }
-
-  // Header band
-  if (logoImg) {
-    const lh = headerH - 10;
-    const lw = (logoImg.width / logoImg.height) * lh;
-    page.drawImage(logoImg, { x: margin + 10, y: a4h - margin - headerH + 5, width: lw, height: lh });
-  }
-  page.drawText('Crossword Clues', {
-    x: margin + (logoImg ? 10 + (logoImg.width / logoImg.height) * (headerH - 10) + 10 : 14),
-    y: a4h - margin - headerH + 11,
-    size: 24,
-    color: rgb(0.12, 0.12, 0.12),
-    font
-  });
-
-  // Footer band
-  const footerLeft = 'LoveFrames • loveframes.shop';
-  const footerRight = 'Generated PDF';
-  const approxWidth = (s, size) => (font ? font.widthOfTextAtSize(s, size) : s.length * size * 0.55);
-  const rw = approxWidth(footerRight, 10);
-  page.drawText(footerLeft, { x: margin + 10, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font });
-  page.drawText(footerRight, { x: a4w - margin - 10 - rw, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font });
-
-  // Clues image
-  const buf = await fetchBuf(cluesUrl);
-  const isPng = buf[0] === 0x89 && buf[1] === 0x50;
-  const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
-  const { width, height } = img.size();
-  const scale = Math.min(maxW / width, maxH / height, 1.9);
-  const w = width * scale, h = height * scale;
-  const x = (a4w - w) / 2;
-  const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
-
-  page.drawImage(img, { x, y, width: w, height: h });
-
-  return Buffer.from(await pdf.save());
-}
-
-// Styled 1–2 page GRID + CLUES PDF (download/email)
-async function buildGridAndCluesPdf({ gridBuf, cluesBuf, puzzleId = '' }) {
+// Styled 1–2 page GRID + CLUES PDF (download/email) — unified & text-capable
+async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleId = '', opts = {} } = {}) {
   const a4w = 595.28, a4h = 841.89;
   const margin = 36;
   const headerH = 38;
@@ -262,12 +198,59 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, puzzleId = '' }) {
   const pdf = await PDFDocument.create();
   const { logoImg, font } = await prepareBrandAssets(pdf);
   const bgUrl = process.env.PDF_BRAND_BG_URL || '';
-  const approxWidth = (s, size) => (font ? font.widthOfTextAtSize(s, size) : s.length * size * 0.55);
+  const approxWidth = (s, size, fnt) => (fnt ? fnt.widthOfTextAtSize(s, size) : s.length * size * 0.55);
+  const useFont = font || await pdf.embedFont(StandardFonts.Helvetica);
 
-  const addPageWithImage = async ({ imageBuf, title, footerLeft, footerRight }) => {
+  // small text-wrapping helper using pdf-lib font metrics
+  function wrapTextToLines(text, fnt, size, maxWidth) {
+    const words = text.replace(/\r/g,'').split(/\s+/);
+    const lines = [];
+    let cur = '';
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i];
+      const test = cur ? (cur + ' ' + w) : w;
+      const width = fnt.widthOfTextAtSize(test, size);
+      if (width > maxWidth && cur) {
+        lines.push(cur);
+        cur = w;
+      } else {
+        cur = test;
+      }
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  // common page header/footer painter
+  const paintHeaderFooter = (page, titleText, pageIndex) => {
+    // background (already drawn at page-level where needed)
+    // header logo
+    if (logoImg) {
+      const lh = headerH - 10;
+      const lw = (logoImg.width / logoImg.height) * lh;
+      page.drawImage(logoImg, { x: margin + 10, y: a4h - margin - headerH + 5, width: lw, height: lh });
+    }
+    const titleX = margin + (logoImg ? 10 + (logoImg.width / logoImg.height) * (headerH - 10) + 10 : 14);
+    page.drawText(titleText, {
+      x: titleX,
+      y: a4h - margin - headerH + 11,
+      size: 16,
+      color: rgb(0.12,0.12,0.12),
+      font: useFont
+    });
+
+    const footerLeft = 'LoveFrames • loveframes.shop';
+    const footerRight = puzzleId ? `Puzzle ${String(puzzleId).slice(0,8)} — Page ${pageIndex}` : `Page ${pageIndex}`;
+    page.drawText(footerLeft, { x: margin + 10, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font: useFont });
+    const rw = approxWidth(footerRight, 10, useFont);
+    page.drawText(footerRight, { x: a4w - margin - 10 - rw, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font: useFont });
+  };
+
+  // Helper to add a page with an embedded image (centered, scaled to maxW/maxH)
+  const addImagePage = async (imageBuf, title, pageIndex) => {
     const page = pdf.addPage([a4w, a4h]);
 
-    // background
+    // background image (brand) if present
     if (bgUrl) {
       try {
         const bgBuf = await fetchBuf(bgUrl);
@@ -278,21 +261,8 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, puzzleId = '' }) {
       }
     }
 
-    // header
-    if (logoImg) {
-      const lh = headerH - 10;
-      const lw = (logoImg.width / logoImg.height) * lh;
-      page.drawImage(logoImg, { x: margin + 10, y: a4h - margin - headerH + 5, width: lw, height: lh });
-    }
-    page.drawText(title, {
-      x: margin + (logoImg ? 10 + (logoImg.width / logoImg.height) * (headerH - 10) + 10 : 14),
-      y: a4h - margin - headerH + 11,
-      size: 16,
-      color: rgb(0.12, 0.12, 0.12),
-      font
-    });
+    paintHeaderFooter(page, title, pageIndex);
 
-    // main image
     if (imageBuf) {
       const isPng = imageBuf[0] === 0x89 && imageBuf[1] === 0x50;
       const img = isPng ? await pdf.embedPng(imageBuf) : await pdf.embedJpg(imageBuf);
@@ -303,36 +273,98 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, puzzleId = '' }) {
       const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
       page.drawImage(img, { x, y, width: w, height: h });
     }
-
-    // footer
-    page.drawText(footerLeft, { x: margin + 10, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font });
-    const rw = approxWidth(footerRight, 10);
-    page.drawText(footerRight, { x: a4w - margin - 10 - rw, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font });
   };
 
-  const pidShort = String(puzzleId || '').slice(0, 8);
-  const leftBrand = 'LoveFrames • loveframes.shop';
+  // Helper to add a page with clues text (or image fallback)
+  const addCluesPage = async ({ cluesBuf, cluesText, pageIndex, scale = 1 }) => {
+    const page = pdf.addPage([a4w, a4h]);
 
+    // background image (brand)
+    if (bgUrl) {
+      try {
+        const bgBuf = await fetchBuf(bgUrl);
+        const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
+        page.drawImage(bgImg, { x: 0, y: 0, width: a4w, height: a4h });
+      } catch (e) {
+        console.warn('PDF bg load failed:', e.message);
+      }
+    }
+
+    paintHeaderFooter(page, 'Crossword Clues', pageIndex);
+
+    // If cluesText provided -> typeset; otherwise fall back to image embedding if cluesBuf present
+    if (cluesText && cluesText.trim().length) {
+      // compute font size from scale param (clamped)
+      const baseSize = Number(process.env.PDF_CLUES_BASE_SIZE || 11.5);
+      const fontSize = Math.max(8, Math.min(34, baseSize * (Number(scale) || 1)));
+      const leading = fontSize * 1.35;
+      const contentMaxW = maxW;
+      const contentMaxH = maxH;
+
+      // Preserve manual newlines/paragraphs: sanitize and split paragraphs
+      const normalized = cluesText.replace(/\r/g, '');
+      const paragraphs = normalized.split('\n\n'); // paragraphs separated by blank line
+
+      // Build lines while preserving single-line breaks inside paragraphs as explicit lines
+      let lines = [];
+      for (const p of paragraphs) {
+        const rawLines = p.split('\n').map(s => s.trim()).filter(Boolean);
+        for (const rl of rawLines) {
+          const wrapped = wrapTextToLines(rl, useFont, fontSize, contentMaxW);
+          lines.push(...wrapped);
+        }
+        // paragraph gap (a blank line)
+        lines.push('');
+      }
+
+      // Compute vertical offset to center the block within the area available
+      const contentHeight = lines.length * leading;
+      let startY = (a4h - margin - headerH) - ((headerH - footerH) / 2) - (contentHeight / 2);
+      const topLimit = a4h - margin - headerH - 10;
+      const bottomLimit = margin + footerH + 10;
+      if (startY > topLimit) startY = topLimit;
+      if (startY - contentHeight < bottomLimit) startY = Math.max(bottomLimit + contentHeight, startY);
+
+      // draw lines
+      let y = startY;
+      for (const line of lines) {
+        // allow tiny horizontal padding
+        page.drawText(line, { x: margin, y: y, size: fontSize, font: useFont, color: rgb(0.08,0.08,0.08) });
+        y -= leading;
+        // stop if we overflow bottom (safety)
+        if (y < bottomLimit) break;
+      }
+    } else if (cluesBuf) {
+      // fallback to image embedding (maintain previous behavior)
+      const isPng = cluesBuf[0] === 0x89 && cluesBuf[1] === 0x50;
+      const img = isPng ? await pdf.embedPng(cluesBuf) : await pdf.embedJpg(cluesBuf);
+      const { width, height } = img.size();
+      const scaleImg = Math.min(maxW / width, maxH / height, 1.9);
+      const w = width * scaleImg, h = height * scaleImg;
+      const x = (a4w - w) / 2;
+      const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
+      page.drawImage(img, { x, y, width: w, height: h });
+    } else {
+      // nothing to render — show empty placeholder text
+      page.drawText('No clues available', { x: margin, y: a4h - margin - headerH - 10, size: 12, font: useFont, color: rgb(0.5,0.5,0.5) });
+    }
+  };
+
+  // Page index counter
+  let pageIndex = 1;
+
+  // GRID page (if provided)
   if (gridBuf) {
-    await addPageWithImage({
-      imageBuf: gridBuf,
-      title: 'Crossword Grid',
-      footerLeft: leftBrand,
-      footerRight: pidShort ? `Puzzle ${pidShort} — Page 1` : 'Page 1'
-    });
+    await addImagePage(gridBuf, 'Crossword Grid', pageIndex);
+    pageIndex++;
   }
 
-  if (cluesBuf) {
-    await addPageWithImage({
-      imageBuf: cluesBuf,
-      title: 'Crossword Clues',
-      footerLeft: leftBrand,
-      footerRight: pidShort ? `Puzzle ${pidShort} — Page 2` : 'Page 2'
-    });
-  }
+  // CLUES page (text preferred, else image)
+  await addCluesPage({ cluesBuf, cluesText, pageIndex, scale: opts.scale || 1 });
 
   return Buffer.from(await pdf.save());
 }
+
 
 // Generic email sender for any PDF attachment (Resend)
 async function sendEmailWithAttachment({ to, subject, html, filename, pdfBuffer }) {
@@ -518,16 +550,21 @@ app.post('/webhooks/orders/create', async (req, res) => {
   const hmacHeader = req.headers['x-shopify-hmac-sha256'] || '';
 
   // Constant-time HMAC verification
-  const computed = crypto
-    .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
-    .update(rawBody)     // pass Buffer, no encoding
-    .digest();           // Buffer
+  try {
+    const computed = crypto
+      .createHmac('sha256', SHOPIFY_WEBHOOK_SECRET)
+      .update(rawBody)     // pass Buffer, no encoding
+      .digest();           // Buffer
 
-  const received = Buffer.from(hmacHeader, 'base64');
-  const valid = received.length === computed.length && crypto.timingSafeEqual(received, computed);
+    const received = Buffer.from(hmacHeader, 'base64');
+    const valid = received.length === computed.length && crypto.timingSafeEqual(received, computed);
 
-  if (!valid) {
-    console.warn('⚠️ Webhook HMAC verification failed.');
+    if (!valid) {
+      console.warn('⚠️ Webhook HMAC verification failed.');
+      return res.status(401).send('HMAC validation failed');
+    }
+  } catch (e) {
+    console.warn('⚠️ Webhook HMAC verification error:', e);
     return res.status(401).send('HMAC validation failed');
   }
 
@@ -541,7 +578,7 @@ app.post('/webhooks/orders/create', async (req, res) => {
   }
   processedShopifyOrders.add(order.id);
 
-  // Index paid puzzleIds once
+  // Index paid puzzleIds once (unchanged)
   try {
     const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
     const seen = [];
@@ -575,15 +612,19 @@ app.post('/webhooks/orders/create', async (req, res) => {
   }
 
   // Place the Printify order(s)
-  await handlePrintifyOrder(order);
+  try {
+    await handlePrintifyOrder(order);
+  } catch (e) {
+    console.error('❌ handlePrintifyOrder failed:', e);
+    // continue — we still want to attempt sending PDFs/emails
+  }
 
-  // === NEW: Email FULL (grid + clues) PDF to buyer, once per puzzle ===
-  // === SMART EMAIL LOGIC: Send CLUES-only if product is physical ===
+  // === Email: always send FULL PDF (grid + clues) to buyer, once per puzzle ===
   try {
     const to =
       [order.email, order.contact_email, order?.customer?.email, process.env.EMAIL_FALLBACK_TO]
         .map(e => (e || '').trim())
-        .find(e => e.includes('@')) || '';
+        .find(e => e && e.includes('@')) || '';
 
     if (!to) {
       console.warn('No buyer email on order; skipping PDF email.');
@@ -600,49 +641,107 @@ app.post('/webhooks/orders/create', async (req, res) => {
         return p ? String(p.value || '') : '';
       };
 
-      const pid   = getProp('_puzzle_id');
-      const grid  = getProp('_custom_image');
-      const clues = getProp('_clues_image_url');
-      const shopVid = String(li.variant_id || '');
+      // debug log to inspect incoming props (remove/level-down later)
+      console.log('Order line properties:', props);
 
+      const pid = getProp('_puzzle_id');
       if (!pid || sent.has(pid)) continue;
 
-      // 🔍 check if this line item is linked to a physical Printify product
-      const isPhysical = !!variantMap[shopVid];
+      const gridUrl  = getProp('_custom_image');
+      const cluesUrl = getProp('_clues_image_url');
+      const shopVid  = String(li.variant_id || '');
 
+      // parse design_specs (if present) to get clues text + size metadata
+      const designSpecsRaw = getProp('_design_specs') || '';
+      let design_specs = null;
+      try { design_specs = designSpecsRaw ? JSON.parse(designSpecsRaw) : null; } catch (err) {
+        console.warn('Failed to parse _design_specs JSON for line item', err.message);
+        design_specs = null;
+      }
+
+      // explicit fallback property
+      const explicitCluesText = getProp('_clues_text') || '';
+
+      // prefer design_specs.clues_text, else explicit _clues_text, else empty string
+      const cluesText = (design_specs && String(design_specs.clues_text || '').trim())
+        || String(explicitCluesText || '').trim() || '';
+
+      // fetch image buffers (if present)
+      const [gridBuf, cluesBuf] = await Promise.all([
+        gridUrl ? fetchBuf(gridUrl) : Promise.resolve(null),
+        cluesUrl ? fetchBuf(cluesUrl) : Promise.resolve(null)
+      ]);
+
+      // compute a simple scale hint from design_specs.size (mirrors handlePrintifyOrder logic)
+      let computedScale = 1;
+      try {
+        const area = printAreas?.[shopVid] || null;
+        let scale = 1.0;
+        const sizeVal = design_specs?.size;
+        if (typeof sizeVal === 'string') {
+          const s = sizeVal.trim();
+          if (s.endsWith('%')) {
+            const pct = parseFloat(s);
+            if (!Number.isNaN(pct)) scale = Math.max(0.1, Math.min(2, pct / 100));
+          } else if (s.endsWith('px') && area?.width) {
+            const px = parseFloat(s);
+            if (!Number.isNaN(px)) scale = Math.max(0.1, Math.min(2, px / area.width));
+          }
+        }
+        computedScale = scale;
+      } catch (e) {
+        // keep default 1
+      }
+
+      // Build unified PDF (grid + clues). If cluesText is present, typeset it; otherwise it falls back to embedding cluesBuf.
       let pdfBuffer;
-      if (isPhysical && clues) {
-        console.log(`📦 Sending CLUES-only PDF for puzzle ${pid}`);
-        pdfBuffer = await buildCluesPdfOnly(clues);
-      } else {
-        console.log(`💾 Sending FULL PDF (grid+clues) for puzzle ${pid}`);
-        const [gridBuf, cluesBuf] = await Promise.all([
-          grid ? fetchBuf(grid) : Promise.resolve(null),
-          clues ? fetchBuf(clues) : Promise.resolve(null)
-        ]);
+      try {
         pdfBuffer = await buildGridAndCluesPdf({
           gridBuf: gridBuf || undefined,
           cluesBuf: cluesBuf || undefined,
-          puzzleId: pid
+          cluesText,
+          puzzleId: pid,
+          opts: { scale: computedScale }
         });
+      } catch (e) {
+        console.error(`❌ buildGridAndCluesPdf failed for puzzle ${pid}:`, e);
+        // attempt fallback: build PDF with images only if text rendering failed
+        try {
+          const fallbackPdf = await buildGridAndCluesPdf({
+            gridBuf: gridBuf || undefined,
+            cluesBuf: cluesBuf || undefined,
+            cluesText: '',
+            puzzleId: pid,
+            opts: { scale: computedScale }
+          });
+          pdfBuffer = fallbackPdf;
+        } catch (ee) {
+          console.error('❌ Fallback PDF generation also failed:', ee);
+          continue; // skip emailing this puzzle
+        }
       }
 
-      await sendEmailWithAttachment({
-        to,
-        subject: isPhysical
-          ? 'Your crossword clues (PDF)'
-          : 'Your printable crossword (PDF)',
-        html: `<p>Thanks for your purchase!</p>
-               <p>Your ${isPhysical ? 'clues' : 'full'} PDF for puzzle <strong>${String(pid).slice(0,8)}</strong> is attached.</p>`,
-        filename: `${isPhysical ? 'clues' : 'crossword'}-${String(pid).slice(0,8)}.pdf`,
-        pdfBuffer
-      });
+      // send email
+      try {
+        await sendEmailWithAttachment({
+          to,
+          subject: 'Your printable crossword (PDF)',
+          html: `<p>Thanks for your purchase!</p>
+                 <p>Your full PDF for puzzle <strong>${String(pid).slice(0,8)}</strong> is attached. It includes both the grid and clues.</p>`,
+          filename: `crossword-${String(pid).slice(0,8)}.pdf`,
+          pdfBuffer
+        });
+        console.log(`📧 Sent PDF email for puzzle ${pid} to ${to}`);
+      } catch (e) {
+        console.error(`❌ sendEmailWithAttachment failed for puzzle ${pid}:`, e);
+      }
 
       sent.add(pid);
     }
   } catch (e) {
     console.error('❌ smart-pdf-email failed:', e);
   }
+
   return res.status(200).send('Webhook received');
 });
 
