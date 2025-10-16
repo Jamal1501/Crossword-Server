@@ -464,8 +464,15 @@ export async function createOrder({
         Ih: uploadedBack?.height,
         requested: requestedBack,
       });
-      console.log('🧮 Back scale', { backKey, requestedBack, finalBackScale });
-    } catch (e) {
+console.log('🧮 Back scale', {
+  backKey,
+  Aw: ph?.width,
+  Ah: ph?.height,
+  Iw: uploadedBack?.width,
+  Ih: uploadedBack?.height,
+  requestedBack,
+  finalBackScale,
+});    } catch (e) {
       console.warn('⚠️ Contain-scale calc failed (back):', e.message);
     }
 
