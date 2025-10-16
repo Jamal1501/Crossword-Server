@@ -62,6 +62,13 @@ async function providerHasVariant(bp, pp, variantId) {
   }
 }
 
+async function getVariantPlaceholderByPos(blueprintId, printProviderId, variantId, pos = 'front') {
+  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
+  const data = await safeFetch(url, { headers: authHeaders() });
+  const v = data?.variants?.find(v => v.id === parseInt(variantId));
+  const ph = v?.placeholders?.find(p => p.position === pos);
+  return ph ? { width: ph.width, height: ph.height } : null;
+}
 /**
  * Resolve a valid (blueprint_id, print_provider_id) for a given catalog variant id.
  * 1) Try the filtered shop product that actually contains this variant.
@@ -171,13 +178,11 @@ async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
   return ph ? { width: ph.width, height: ph.height } : null;
 }
 
-// Allow images to enlarge if they're smaller than the print area
+// Allow enlarging to fully contain within the placeholder box
 function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
   if (!Aw || !Ah || !Iw || !Ih) return requested ?? 1;
-  const containScale = Math.min(Aw / Iw, Ah / Ih);
-  // keep the requested multiplier but don't force a max of 1
-  const final = containScale * (requested ?? 1);
-  return final;
+  const contain = Math.min(Aw / Iw, Ah / Ih); // can be > 1 when image is smaller
+  return contain * (requested ?? 1);
 }
 
 
@@ -307,6 +312,7 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId, variantI
    Order creation (front/back)
 --------------------------- */
 
+// REPLACE YOUR ENTIRE createOrder(...) WITH THIS VERSION
 export async function createOrder({
   imageUrl,
   backImageUrl,
@@ -349,31 +355,28 @@ export async function createOrder({
     }
   }
 
-// 3) Resolve product / provider / blueprint for this variant (single source of truth)
-console.log('🔍 Resolving (blueprint, provider) for variant via paged + filtered products…');
+  // 3) Resolve product / provider / blueprint for this variant
+  console.log('🔍 Resolving (blueprint, provider) for variant via paged + filtered products…');
+  let product, printProviderId, blueprintId;
+  try {
+    const { product: matchedProduct, blueprintId: bp, printProviderId: pp } =
+      await resolveBpPpForVariant(variantId);
 
-let product, printProviderId, blueprintId;
-try {
-  const { product: matchedProduct, blueprintId: bp, printProviderId: pp } =
-    await resolveBpPpForVariant(variantId);
+    product = matchedProduct;
+    blueprintId = bp;
+    printProviderId = pp;
 
-  product = matchedProduct;
-  blueprintId = bp;
-  printProviderId = pp;
+    console.log(`✅ Matched variant ${variantId} to product:`, {
+      title: product?.title,
+      blueprintId,
+      printProviderId
+    });
+  } catch (e) {
+    console.error('❌ Unable to resolve (bp,pp) for variant', variantId, e.message);
+    throw e;
+  }
 
-  console.log(`✅ Matched variant ${variantId} to product:`, {
-    title: product?.title,
-    blueprintId,
-    printProviderId
-  });
-} catch (e) {
-  console.error('❌ Unable to resolve (bp,pp) for variant', variantId, e.message);
-  throw e;
-}
-
-
-
-  // 4) Contain-fit scale for FRONT (avoid clipping)
+  // 4) Contain-fit scale for FRONT (avoid clipping), using your contain helper
   let finalScale = position?.scale ?? 1;
   try {
     const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
@@ -392,112 +395,93 @@ try {
     console.warn('⚠️ Contain-scale calc failed (front):', e.message);
   }
 
-// 5) Build print_areas from REQUIRED placeholders
-const frontSrc =
-  uploadedFront?.file_url ||
-  uploadedFront?.preview_url ||
-  uploadedFront?.url ||
-  uploadedFront; // last resort if helper already returned a string
+  // 5) Build placeholders for ORDERS API (must use upload IDs, not URLs)
+  const frontId = uploadedFront?.id;
 
-// discover which placeholders this variant requires (e.g. ["front","front_cover"])
-let requiredPlaceholders = ['front'];
-try {
-  requiredPlaceholders = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
-  if (!Array.isArray(requiredPlaceholders) || requiredPlaceholders.length === 0) {
+  // discover which placeholders this variant requires (e.g. ["front","front_cover"])
+  let requiredPlaceholders = ['front'];
+  try {
+    requiredPlaceholders = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
+    if (!Array.isArray(requiredPlaceholders) || requiredPlaceholders.length === 0) {
+      requiredPlaceholders = ['front'];
+    }
+  } catch (e) {
     requiredPlaceholders = ['front'];
   }
-} catch (e) {
-  requiredPlaceholders = ['front'];
-}
 
-// always include FRONT
-const printAreas = {
-  front: [{
-    src: frontSrc,
-    image_url: frontSrc,
-    position: "front",
-    x: position?.x ?? 0.5,
-    y: position?.y ?? 0.5,
-    scale: finalScale,
-    angle: position?.angle ?? 0
-  }]
-};
+  // Build placeholders (no duplicates, exactly one entry per slot)
+  const placeholders = [];
 
-// if the blueprint demands "front_cover", duplicate front to satisfy validation
-if (requiredPlaceholders.includes('front_cover')) {
-  printAreas.front_cover = [{
-    src: frontSrc,
-    image_url: frontSrc,
-    position: "front_cover",
-    x: position?.x ?? 0.5,
-    y: position?.y ?? 0.5,
-    scale: finalScale,
-    angle: position?.angle ?? 0
-  }];
-}
+  // FRONT (always)
+  placeholders.push({
+    position: 'front',
+    images: [{
+      id: frontId,
+      x: position?.x ?? 0.5,
+      y: position?.y ?? 0.5,
+      scale: finalScale,
+      angle: position?.angle ?? 0,
+    }],
+  });
 
-// include a back/alt placeholder ONLY if you actually have a back image
-if (uploadedBack) {
-  const backSrc =
-    uploadedBack?.file_url ||
-    uploadedBack?.preview_url ||
-    uploadedBack?.url ||
-    uploadedBack;
-
-  // prefer "back", otherwise first non-front/cover placeholder name
-  const altKey = requiredPlaceholders.find(n => n !== 'front' && n !== 'front_cover');
-  const backKey = requiredPlaceholders.includes('back') ? 'back' : (altKey || 'back');
-
-  printAreas[backKey] = [{
-    src: backSrc,
-    image_url: backSrc,
-    position: backKey,
-    x: 0.5,
-    y: 0.5,
-    scale: 1,
-    angle: 0
-  }];
-
-  // 🔧 Determine back placement & scale
-  const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
-  const bpScale =
-    typeof backPosition?.scale === 'number'
-      ? backPosition.scale
-      : (position?.scale ?? 1) * BACK_SCALE_MULT;
-
-  const bx = backPosition?.x ?? 0.5;
-  const by = backPosition?.y ?? 0.5;
-  const ba = backPosition?.angle ?? 0;
-
-  // Optionally constrain the back image so it fills the print area safely
-  let finalBackScale = bpScale;
-  try {
-    const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
-    finalBackScale = clampContainScale({
-      Aw: ph?.width,
-      Ah: ph?.height,
-      Iw: uploadedBack?.width,
-      Ih: uploadedBack?.height,
-      requested: bpScale,
+  // If blueprint demands "front_cover", add it once
+  if (requiredPlaceholders.includes('front_cover')) {
+    placeholders.push({
+      position: 'front_cover',
+      images: [{
+        id: frontId,
+        x: position?.x ?? 0.5,
+        y: position?.y ?? 0.5,
+        scale: finalScale,
+        angle: position?.angle ?? 0,
+      }],
     });
-  } catch (e) {
-    console.warn('⚠️ Contain-scale calc failed (back):', e.message);
   }
 
-  printAreas[backKey] = [{
-    src: backSrc,
-    image_url: backSrc,
-    position: backKey,
-    x: bx,
-    y: by,
-    scale: finalBackScale,
-    angle: ba,
-  }];
-}
+  // BACK (only if provided/supported)
+  if (uploadedBack) {
+    const backId = uploadedBack?.id;
 
+    // Prefer "back". If not present, use first non-front/cover placeholder, else 'back'.
+    const nonFront = requiredPlaceholders.filter(n => n !== 'front' && n !== 'front_cover');
+    const backKey = requiredPlaceholders.includes('back') ? 'back' : (nonFront[0] || 'back');
 
+    const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
+    const bx = backPosition?.x ?? 0.5;
+    const by = backPosition?.y ?? 0.5;
+    const ba = backPosition?.angle ?? 0;
+    const requestedBack =
+      (typeof backPosition?.scale === 'number' ? backPosition.scale : (position?.scale ?? 1)) * BACK_SCALE_MULT;
 
-  // 6) Final order payload
+    // contain using the actual back placeholder’s box
+    let finalBackScale = requestedBack;
+    try {
+      const ph = await getVariantPlaceholderByPos(blueprintId, printProviderId, parseInt(variantId), backKey);
+      finalBackScale = clampContainScale({
+        Aw: ph?.width,
+        Ah: ph?.height,
+        Iw: uploadedBack?.width,
+        Ih: uploadedBack?.height,
+        requested: requestedBack,
+      });
+      console.log('🧮 Back scale', { backKey, requestedBack, finalBackScale });
+    } catch (e) {
+      console.warn('⚠️ Contain-scale calc failed (back):', e.message);
+    }
+
+    placeholders.push({
+      position: backKey,
+      images: [{
+        id: backId,
+        x: bx,
+        y: by,
+        scale: finalBackScale,
+        angle: ba,
+      }],
+    });
+  }
+
+  // 6) Final order payload (print_areas as array with one object that has placeholders)
   const payload = {
     external_id: `order-${Date.now()}`,
     label: 'Crossword Custom Order',
@@ -506,7 +490,10 @@ if (uploadedBack) {
       quantity: Math.max(1, Number(quantity) || 1),
       print_provider_id: printProviderId,
       blueprint_id: blueprintId,
-      print_areas: printAreas
+      print_areas: [{
+        variant_ids: [parseInt(variantId)],
+        placeholders
+      }]
     }],
     shipping_method: 1,
     send_shipping_notification: true,
@@ -534,9 +521,7 @@ if (uploadedBack) {
   return orderRes;
 }
 
-/* --------------------------
-   Product preview updaters
---------------------------- */
+/* -------------------------- Product preview updaters --------------------------- */
 
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement, imageMeta) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
