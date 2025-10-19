@@ -1529,7 +1529,7 @@ app.all('/preview-pdf', async (req, res) => {
     const payload = req.method === 'POST' ? req.body : req.query;
     const imageUrl   = String(payload.imageUrl || '');
     const cluesUrl   = String(payload.cluesUrl || '');
-    const cluesText  = String(payload.cluesText || '').trim();   // NEW: allow text preview
+    const cluesText  = String(payload.cluesText || '').trim();
     const scale      = Number(payload.scale || 1) || 1;
     const watermark  = String(payload.watermark ?? '1') !== '0'; // default: show PREVIEW
 
@@ -1541,16 +1541,16 @@ app.all('/preview-pdf', async (req, res) => {
       fetchMaybe(cluesUrl)
     ]);
 
-    // Build with the SAME function used for real PDFs
+    // Build with the SAME function used for real PDFs (adds brand header/footer/bg/fonts)
     let pdfBytes = await buildGridAndCluesPdf({
       gridBuf: gridBuf || undefined,
       cluesBuf: cluesBuf || undefined,
-      cluesText,                      // <- prefer text for preview too
+      cluesText,                 // prefer text typesetting for preview too
       puzzleId: 'PREVIEW',
       opts: { scale }
     });
 
-    // Optional: overlay PREVIEW watermark without changing layout
+    // Optional: overlay watermark without affecting layout
     if (watermark) {
       const doc = await PDFDocument.load(pdfBytes);
       const pages = doc.getPages();
@@ -1576,6 +1576,7 @@ app.all('/preview-pdf', async (req, res) => {
     return res.status(500).send('Preview failed');
   }
 });
+
 
 
 // === PDF claim & download (App Proxy style) ===
@@ -1958,6 +1959,14 @@ app.post('/admin/print-areas/sync-defaults', async (req, res) => {
 });
 
 // ======================== OTHER DEBUG ROUTES =========================
+app.get('/debug/pdf-brand', (req, res) => {
+  res.json({
+    PDF_LOGO_URL: !!process.env.PDF_LOGO_URL,
+    PDF_BRAND_BG_URL: !!process.env.PDF_BRAND_BG_URL,
+    PDF_FONT_URL: !!process.env.PDF_FONT_URL
+  });
+});
+
 app.get('/__echo', (req, res) => {
   res.json({ ok: true, path: req.path, query: req.query });
 });
