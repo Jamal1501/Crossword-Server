@@ -1523,64 +1523,60 @@ app.post('/register-purchase-and-download', async (req, res) => {
   }
 });
 
-// Preview PDF with watermark (no authentication required)
-app.get('/preview-pdf', async (req, res) => {
+// Preview PDF (branded, same builder) — supports POST (preferred) and GET
+app.all('/preview-pdf', async (req, res) => {
   try {
-    const imageUrl = String(req.query.imageUrl || '');
-    const cluesUrl = String(req.query.cluesUrl || '');
+    const payload = req.method === 'POST' ? req.body : req.query;
+    const imageUrl   = String(payload.imageUrl || '');
+    const cluesUrl   = String(payload.cluesUrl || '');
+    const cluesText  = String(payload.cluesText || '').trim();   // NEW: allow text preview
+    const scale      = Number(payload.scale || 1) || 1;
+    const watermark  = String(payload.watermark ?? '1') !== '0'; // default: show PREVIEW
 
     if (!imageUrl) return res.status(400).send('Missing imageUrl');
 
-    const a4w = 595.28, a4h = 841.89;
-    const margin = 36;
-    const maxW = a4w - margin * 2;
-    const maxH = a4h - margin * 2;
-
     const fetchMaybe = async (url) => (url ? fetchBuf(url) : null);
-
-    const [puzzleBuf, cluesBuf] = await Promise.all([
+    const [gridBuf, cluesBuf] = await Promise.all([
       fetchMaybe(imageUrl),
       fetchMaybe(cluesUrl)
     ]);
 
-    const pdf = await PDFDocument.create();
+    // Build with the SAME function used for real PDFs
+    let pdfBytes = await buildGridAndCluesPdf({
+      gridBuf: gridBuf || undefined,
+      cluesBuf: cluesBuf || undefined,
+      cluesText,                      // <- prefer text for preview too
+      puzzleId: 'PREVIEW',
+      opts: { scale }
+    });
 
-    const addImagePage = async (buf, withWatermark = true) => {
-      const page = pdf.addPage([a4w, a4h]);
-      if (buf) {
-        const isPng = buf[0] === 0x89 && buf[1] === 0x50;
-        const img = isPng ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
-        const { width, height } = img.size();
-        const scale = Math.min(maxW / width, maxH / height, 1);
-        const w = width * scale, h = height * scale;
-        const x = (a4w - w) / 2, y = (a4h - h) / 2;
-        page.drawImage(img, { x, y, width: w, height: h });
-      }
-      if (withWatermark) {
+    // Optional: overlay PREVIEW watermark without changing layout
+    if (watermark) {
+      const doc = await PDFDocument.load(pdfBytes);
+      const pages = doc.getPages();
+      for (const page of pages) {
+        const { width: a4w, height: a4h } = page.getSize();
         page.drawText('PREVIEW', {
           x: a4w * 0.18,
           y: a4h * 0.45,
           size: 64,
           color: rgb(0.8, 0.1, 0.1),
           rotate: { type: 'degrees', angle: 35 },
-          opacity: 0.25
+          opacity: 0.2
         });
       }
-    };
+      pdfBytes = await doc.save();
+    }
 
-    await addImagePage(puzzleBuf, true);
-    await addImagePage(cluesBuf, true);
-
-    const pdfBytes = await pdf.save();
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="crossword-preview.pdf"');
     return res.send(Buffer.from(pdfBytes));
-
   } catch (err) {
     console.error('Preview PDF failed:', err);
     return res.status(500).send('Preview failed');
   }
 });
+
 
 // === PDF claim & download (App Proxy style) ===
 app.get('/apps/crossword/claim-pdf', (req, res) => {
