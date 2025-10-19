@@ -87,11 +87,16 @@ try {
 // ======================= CLIENT CONFIG ROUTE =========================
 app.get('/apps/crossword/config', (req, res) => {
   const postcardVariantId = process.env.POSTCARD_SHOPIFY_VARIANT_ID || '';
-  if (!postcardVariantId) {
-    console.warn('⚠️ POSTCARD_SHOPIFY_VARIANT_ID not configured in environment');
-  }
-  res.json({ ok: true, postcardVariantId });
+  const pdfVariantId = process.env.PDF_ONLY_SHOPIFY_VARIANT_ID 
+                    || process.env.CLUES_PDF_SHOPIFY_VARIANT_ID 
+                    || ''; // backward compat if you had an older name
+
+  if (!postcardVariantId) console.warn('⚠️ POSTCARD_SHOPIFY_VARIANT_ID not configured in environment');
+  if (!pdfVariantId)      console.warn('⚠️ PDF_ONLY_SHOPIFY_VARIANT_ID not configured in environment');
+
+  res.json({ ok: true, postcardVariantId, pdfVariantId });
 });
+
 
 // Resolve Shopify variant ID → Printify variant ID
 app.get('/apps/crossword/resolve-printify-variant/:shopifyVariantId', async (req, res) => {
