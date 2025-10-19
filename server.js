@@ -588,28 +588,42 @@ app.post('/webhooks/orders/create', async (req, res) => {
     const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
     const seen = [];
 
-    for (const li of lineItems) {
-      const props = Array.isArray(li.properties) ? li.properties : [];
-      const getProp = (name) => {
-        const p = props.find(x => x && x.name === name);
-        return p ? String(p.value || '') : '';
-      };
+for (const li of lineItems) {
+  const props = Array.isArray(li.properties) ? li.properties : [];
+  const getProp = (name) => {
+    const p = props.find(x => x && x.name === name);
+    return p ? String(p.value || '') : '';
+  };
 
-      const pid = getProp('_puzzle_id');
-      if (!pid) continue;
+  const pid = getProp('_puzzle_id');
+  if (!pid) continue;
 
-      const crosswordImage = getProp('_custom_image');
-      const cluesImage     = getProp('_clues_image_url');
+  const crosswordImage = getProp('_custom_image');
+  const cluesImage     = getProp('_clues_image_url');
 
-      PaidPuzzles.set(pid, {
-        orderId: String(order.id),
-        email: (order.email || order?.customer?.email || '') + '',
-        crosswordImage,
-        cluesImage,
-        when: new Date().toISOString(),
-      });
-      seen.push(pid);
-    }
+  // NEW: parse text from design_specs / _clues_text
+  const design_specs_raw = getProp('_design_specs') || '';
+  let design_specs = null;
+  try {
+    design_specs = design_specs_raw ? JSON.parse(design_specs_raw) : null;
+  } catch {}
+  const explicitCluesText = getProp('_clues_text') || '';
+  const cluesText = (design_specs && String(design_specs.clues_text || '').trim())
+    || String(explicitCluesText || '').trim()
+    || '';
+
+  PaidPuzzles.set(pid, {
+    orderId: String(order.id),
+    email: (order.email || order?.customer?.email || '') + '',
+    crosswordImage,
+    cluesImage,
+    cluesText,  // stored for text-typeset PDFs
+    when: new Date().toISOString(),
+  });
+
+  seen.push(pid);
+}
+
 
     if (seen.length) console.log('🔐 Stored paid puzzleIds:', seen);
   } catch (e) {
@@ -1464,7 +1478,7 @@ app.get("/apps/crossword/all-print-areas", async (req, res) => {
 // Direct purchase registration and PDF download (no App Proxy)
 app.post('/register-purchase-and-download', async (req, res) => {
   try {
-    const { puzzleId, orderId, crosswordImage, cluesImage } = req.body;
+    const { puzzleId, orderId, crosswordImage, cluesImage, cluesText } = req.body;
 
     console.log('Direct PDF request:', { puzzleId, orderId, hasImage: !!crosswordImage });
 
@@ -1495,7 +1509,8 @@ app.post('/register-purchase-and-download', async (req, res) => {
     const pdfBytes = await buildGridAndCluesPdf({
       gridBuf: puzzleBuf || undefined,
       cluesBuf: cluesBuf || undefined,
-      puzzleId
+  cluesText: cluesText || '',         
+  puzzleId
     });
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -1604,7 +1619,8 @@ app.get('/apps/crossword/download-pdf', async (req, res) => {
     const pdfBytes = await buildGridAndCluesPdf({
       gridBuf: puzzleBuf || undefined,
       cluesBuf: cluesBuf || undefined,
-      puzzleId
+  cluesText: (rec.cluesText || ''),  
+  puzzleId
     });
 
     res.setHeader('Content-Type', 'application/pdf');
