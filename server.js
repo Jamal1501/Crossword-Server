@@ -485,19 +485,16 @@ async function handlePrintifyOrder(order) {
       }
     }
 
-// 🔄 Use live placeholder from Printify catalog for this mapped Printify variant
+// --- use live placeholder for this Printify variant (front) ---
 let phFront = null;
 try {
   const { blueprintId, printProviderId } = await resolveBpPpForVariant(printifyVariantId);
   phFront = await getVariantPlaceholderByPos(
-    blueprintId,
-    printProviderId,
-    Number(printifyVariantId),
-    'front'
+    blueprintId, printProviderId, Number(printifyVariantId), 'front'
   );
-} catch {}
+} catch { /* keep null fallback */ }
 
-// Derive scale from design_specs.size relative to real area width
+// --- derive scale from design_specs.size relative to real area width ---
 let scale = 1.0;
 const sizeVal = item.design_specs?.size;
 if (typeof sizeVal === 'string') {
@@ -511,50 +508,43 @@ if (typeof sizeVal === 'string') {
   }
 }
 
-// Normalize x/y using real area dims
-const topPx  = parseFloat(item.design_specs?.top || '0');
+// --- normalize x/y using real area dims ---
+const topPx  = parseFloat(item.design_specs?.top  || '0');
 const leftPx = parseFloat(item.design_specs?.left || '0');
-
 let x = 0.5, y = 0.5;
+
 if (phFront?.width && phFront?.height) {
   const imgW = phFront.width  * scale;
   const imgH = phFront.height * scale;
   x = Math.min(1, Math.max(0, (leftPx + imgW / 2) / phFront.width));
   y = Math.min(1, Math.max(0, (topPx  + imgH / 2) / phFront.height));
 }
+
 const position = { x, y, scale, angle: 0 };
 
-// Back scale remains your multiplier-based request (clamped later in createOrder)
+// --- back placement: keep multiplier approach (clamped) ---
 const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
 const backScale = Math.max(0.1, Math.min(2, scale * BACK_SCALE_MULT));
 const backPosition = { x: 0.5, y: 0.5, scale: backScale, angle: 0 };
 
-const recipient = {
-  name: `${order.shipping_address?.first_name || ''} ${order.shipping_address?.last_name || ''}`.trim(),
-  email: order.email,
-  phone: order.phone || '',
-  address1: order.shipping_address?.address1 || '',
-  city: order.shipping_address?.city || '',
-  zip: order.shipping_address?.zip || '',
-  country: order.shipping_address?.country_code || ''
-};
+// --- make sure 'area' exists before you pass it below ---
+const area = printAreas?.[shopifyVid] || null;
 
-// 🔹 Only send back image to Printify if user chose to print clues on back
+// --- finally, call createOrder ---
 const backImageUrl =
   item.clue_output_mode === 'back' && item.clues_image_url ? item.clues_image_url : undefined;
 
-try {
-  const response = await createOrder({
-    imageUrl: item.custom_image,
-    backImageUrl,                     // optional back
-    variantId: printifyVariantId,
-    quantity: item.quantity,
-    position,
-    backPosition,
-    recipient,
-    // printArea: undefined, // not needed anymore
-    meta: { shopifyVid, title: item.title }
-  });
+await createOrder({
+  imageUrl: item.custom_image,
+  backImageUrl,
+  variantId: printifyVariantId,
+  quantity: item.quantity,
+  position,
+  backPosition,
+  recipient,
+  printArea: area || undefined,
+  meta: { shopifyVid, title: item.title }
+});
   console.log('✅ Printify order created:', response?.id || '[no id]', { shopifyVid, printifyVariantId, scale });
 } catch (err) {
   console.error('❌ Failed to create Printify order:', { shopifyVid, printifyVariantId, scale, err: err?.message || err });
