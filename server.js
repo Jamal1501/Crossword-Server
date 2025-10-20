@@ -483,33 +483,45 @@ async function handlePrintifyOrder(order) {
       }
     }
 
-    // Optional: per-variant print area (width/height/top/left)
-    const area = printAreas?.[shopifyVid] || null;
+// 🔄 Use live placeholder from Printify catalog for this mapped Printify variant
+let phFront = null;
+try {
+  const { blueprintId, printProviderId } = await resolveBpPpForVariant(printifyVariantId);
+  phFront = await getVariantPlaceholderByPos(blueprintId, printProviderId, Number(printifyVariantId), 'front');
+} catch {}
 
-    // Derive scale from design_specs.size (prefer percentages); fallback 1.0
-    let scale = 1.0;
-    const sizeVal = item.design_specs?.size;
-    if (typeof sizeVal === 'string') {
-      const s = sizeVal.trim();
-      if (s.endsWith('%')) {
-        const pct = parseFloat(s);
-        if (!Number.isNaN(pct)) scale = Math.max(0.1, Math.min(2, pct / 100));
-      } else if (s.endsWith('px') && area?.width) {
-        const px = parseFloat(s);
-        if (!Number.isNaN(px)) scale = Math.max(0.1, Math.min(2, px / area.width));
-      }
-    }
+// Derive scale from design_specs.size relative to real area width
+let scale = 1.0;
+const sizeVal = item.design_specs?.size;
+if (typeof sizeVal === 'string') {
+  const s = sizeVal.trim();
+  if (s.endsWith('%')) {
+    const pct = parseFloat(s);
+    if (!Number.isNaN(pct)) scale = Math.max(0.1, Math.min(2, pct / 100));
+  } else if (s.endsWith('px') && phFront?.width) {
+    const px = parseFloat(s);
+    if (!Number.isNaN(px)) scale = Math.max(0.1, Math.min(2, px / phFront.width));
+  }
+}
 
-    // Compute normalized center from editor offsets (top/left were pixels in the print area)
-    const topPx  = parseFloat(item.design_specs?.top || '0');
-    const leftPx = parseFloat(item.design_specs?.left || '0');
-    let x = 0.5, y = 0.5;
-    if (area && Number.isFinite(area.width) && Number.isFinite(area.height)) {
-      const imgW = area.width  * scale;
-      const imgH = area.height * scale;
-      x = Math.min(1, Math.max(0, (leftPx + imgW / 2) / area.width));
-      y = Math.min(1, Math.max(0, (topPx  + imgH / 2) / area.height));
-    }
+// Normalize x/y using real area dims
+const topPx  = parseFloat(item.design_specs?.top || '0');
+const leftPx = parseFloat(item.design_specs?.left || '0');
+
+let x = 0.5, y = 0.5;
+if (phFront?.width && phFront?.height) {
+  const imgW = phFront.width  * scale;
+  const imgH = phFront.height * scale;
+  x = Math.min(1, Math.max(0, (leftPx + imgW / 2) / phFront.width));
+  y = Math.min(1, Math.max(0, (topPx  + imgH / 2) / phFront.height));
+}
+const position = { x, y, scale, angle: 0 };
+
+// Back scale remains your multiplier-based request (clamped later in createOrder)
+const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
+const backScale = Math.max(0.1, Math.min(2, scale * BACK_SCALE_MULT));
+const backPosition = { x: 0.5, y: 0.5, scale: backScale, angle: 0 };
+
    const position = { x, y, scale, angle: 0 };
     // Use same placement for back (or allow a multiplier via env)
     const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
