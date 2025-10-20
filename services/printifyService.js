@@ -182,7 +182,7 @@ async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
  function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
    if (!Aw || !Ah || !Iw || !Ih) return requested ?? 1;
    const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih));
-   const factor = (requested ??0.95);      // 1 = full contain, 0.9 = 90% of contain
+   const factor = (requested ??0.90);      // 1 = full contain, 0.9 = 90% of contain
    return Math.max(0, sMax * factor);
  }
 
