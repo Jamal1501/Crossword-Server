@@ -9,6 +9,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import * as printifyService from './services/printifyService.js';
 import { resolveBpPpForVariant, getVariantPlaceholderByPos } from './services/printifyService.js';
 import { safeFetch } from './services/printifyService.js';
+import { uploadImageFromUrl, applyImageToProduct, applyImagesToProductDual, fetchProduct } from './services/printifyService.js';
 import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
 import path from 'path';
@@ -1075,7 +1076,6 @@ app.get('/apps/crossword/products', async (req, res) => {
   }
 });
 
-import { uploadImageFromUrl, applyImageToProduct, applyImagesToProductDual, fetchProduct } from './services/printifyService.js';
 
 app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
   try {
