@@ -378,7 +378,7 @@ export async function createOrder({
   }
 
   // 4) Contain-fit scale for FRONT (avoid clipping), using your contain helper
-  let finalScale = position?.scale ?? 0.6;
+  let finalScale = position?.scale ?? 1;
   try {
     const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
     finalScale = clampContainScale({
