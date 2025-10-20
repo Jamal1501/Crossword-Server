@@ -481,45 +481,61 @@ export async function createOrder({
     }];
   }
 
-  // 6) Final order payload
-  const payload = {
-    external_id: `order-${Date.now()}`,
-    label: 'Crossword Custom Order',
-    line_items: [{
-      variant_id: parseInt(variantId),
-      quantity: Math.max(1, Number(quantity) || 1),
-      print_provider_id: printProviderId,
-      blueprint_id: blueprintId,
-      print_areas: [{
-    // variant_ids: [parseInt(variantId)], // optional
-    placeholders: [ /* front (+ front_cover) (+ back) as built above */ ]
-  }]
-    }],
-    shipping_method: 1,
-    send_shipping_notification: true,
-    address_to: {
-      first_name: recipient.name?.split(' ')[0] || '-',
-      last_name: recipient.name?.split(' ').slice(1).join(' ') || '-',
-      email: recipient.email,
-      address1: recipient.address1,
-      city: recipient.city,
-      country: recipient.country,
-      zip: recipient.zip,
-      phone: recipient.phone || ''
-    }
-  };
+  // Build placeholders array from your computed printAreas object
+const placeholdersArr = [];
 
-  console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
+// FRONT
+placeholdersArr.push({
+  position: 'front',
+  images: [ printAreas.front[0] ]
+});
 
-  const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
-  const orderRes = await safeFetch(url, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify(payload)
+// FRONT_COVER (optional)
+if (printAreas.front_cover) {
+  placeholdersArr.push({
+    position: 'front_cover',
+    images: [ printAreas.front_cover[0] ]
   });
-  console.log('✅ Printify order successfully created:', orderRes?.id || '[no id]');
-  return orderRes;
 }
+
+// BACK (optional — key may vary)
+const backKeyCandidate = Object.keys(printAreas).find(k => k !== 'front' && k !== 'front_cover');
+if (backKeyCandidate) {
+  placeholdersArr.push({
+    position: backKeyCandidate,
+    images: [ printAreas[backKeyCandidate][0] ]
+  });
+}
+
+// 6) Final order payload (placeholders-array shape)
+const payload = {
+  external_id: `order-${Date.now()}`,
+  label: 'Crossword Custom Order',
+  line_items: [{
+    variant_id: parseInt(variantId),
+    quantity: Math.max(1, Number(quantity) || 1),
+    print_provider_id: printProviderId,
+    blueprint_id: blueprintId,
+    print_areas: [{
+      // variant_ids: [parseInt(variantId)], // optional
+      placeholders: placeholdersArr
+    }]
+  }],
+  shipping_method: 1,
+  send_shipping_notification: true,
+  address_to: {
+    first_name: recipient.name?.split(' ')[0] || '-',
+    last_name: recipient.name?.split(' ').slice(1).join(' ') || '-',
+    email: recipient.email,
+    address1: recipient.address1,
+    city: recipient.city,
+    country: recipient.country,
+    zip: recipient.zip,
+    phone: recipient.phone || ''
+  }
+};
+
+console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
 
 /* -------------------------- Product preview updaters --------------------------- */
 
