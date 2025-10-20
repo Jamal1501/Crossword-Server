@@ -7,6 +7,7 @@ import cors from 'cors';
 import fetch from 'node-fetch';
 import { v2 as cloudinary } from 'cloudinary';
 import * as printifyService from './services/printifyService.js';
+import { resolveBpPpForVariant, getVariantPlaceholderByPos } from './services/printifyService.js';
 import { safeFetch } from './services/printifyService.js';
 import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
@@ -487,7 +488,12 @@ async function handlePrintifyOrder(order) {
 let phFront = null;
 try {
   const { blueprintId, printProviderId } = await resolveBpPpForVariant(printifyVariantId);
-  phFront = await getVariantPlaceholderByPos(blueprintId, printProviderId, Number(printifyVariantId), 'front');
+  phFront = await getVariantPlaceholderByPos(
+    blueprintId,
+    printProviderId,
+    Number(printifyVariantId),
+    'front'
+  );
 } catch {}
 
 // Derive scale from design_specs.size relative to real area width
@@ -522,43 +528,35 @@ const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
 const backScale = Math.max(0.1, Math.min(2, scale * BACK_SCALE_MULT));
 const backPosition = { x: 0.5, y: 0.5, scale: backScale, angle: 0 };
 
-   const position = { x, y, scale, angle: 0 };
-    // Use same placement for back (or allow a multiplier via env)
-    const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
-    const backScale = Math.max(0.1, Math.min(2, scale * BACK_SCALE_MULT));
-    const backPosition = { x: 0.5, y: 0.5, scale: backScale, angle: 0 };
+const recipient = {
+  name: `${order.shipping_address?.first_name || ''} ${order.shipping_address?.last_name || ''}`.trim(),
+  email: order.email,
+  phone: order.phone || '',
+  address1: order.shipping_address?.address1 || '',
+  city: order.shipping_address?.city || '',
+  zip: order.shipping_address?.zip || '',
+  country: order.shipping_address?.country_code || ''
+};
 
-    const recipient = {
-      name: `${order.shipping_address?.first_name || ''} ${order.shipping_address?.last_name || ''}`.trim(),
-      email: order.email,
-      phone: order.phone || '',
-      address1: order.shipping_address?.address1 || '',
-      city: order.shipping_address?.city || '',
-      zip: order.shipping_address?.zip || '',
-      country: order.shipping_address?.country_code || ''
-    };
+// 🔹 Only send back image to Printify if user chose to print clues on back
+const backImageUrl =
+  item.clue_output_mode === 'back' && item.clues_image_url ? item.clues_image_url : undefined;
 
-    // 🔹 Only send back image to Printify if user chose to print clues on back
-    const backImageUrl =
-      item.clue_output_mode === 'back' && item.clues_image_url ? item.clues_image_url : undefined;
-
-    try {
-      const response = await createOrder({
-        imageUrl: item.custom_image,
-        backImageUrl,                     // pass back image for printing on back (when selected)
-        variantId: printifyVariantId,
-        quantity: item.quantity,
-        position,
-        backPosition,
-        recipient,
-        printArea: area || undefined,
-        meta: { shopifyVid, title: item.title }
-      });
-      console.log('✅ Printify order created:', response?.id || '[no id]', { shopifyVid, printifyVariantId, scale });
-    } catch (err) {
-      console.error('❌ Failed to create Printify order:', { shopifyVid, printifyVariantId, scale, err: err?.message || err });
-    }
-  }
+try {
+  const response = await createOrder({
+    imageUrl: item.custom_image,
+    backImageUrl,                     // optional back
+    variantId: printifyVariantId,
+    quantity: item.quantity,
+    position,
+    backPosition,
+    recipient,
+    // printArea: undefined, // not needed anymore
+    meta: { shopifyVid, title: item.title }
+  });
+  console.log('✅ Printify order created:', response?.id || '[no id]', { shopifyVid, printifyVariantId, scale });
+} catch (err) {
+  console.error('❌ Failed to create Printify order:', { shopifyVid, printifyVariantId, scale, err: err?.message || err });
 }
 
 app.post('/webhooks/orders/create', async (req, res) => {
