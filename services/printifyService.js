@@ -179,11 +179,14 @@ async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
 }
 
 // Allow enlarging to fully contain within the placeholder box
+// (Printify expects 0..1; clamp the final!)
 function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
-  if (!Aw || !Ah || !Iw || !Ih) return requested ?? 1;
-  const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih)); // Printify scale = fraction of area width
-  return Math.max(0, sMax * (requested ?? 1));      // requested=1 → full contain
+  if (!Aw || !Ah || !Iw || !Ih) return Math.max(0, Math.min(1, requested ?? 1));
+  const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih)); // fraction of area width for contain
+  const out  = (requested ?? 1) * sMax;
+  return Math.max(0, Math.min(1, out));
 }
+
 
 
 /* --------------------------
@@ -391,6 +394,8 @@ export async function createOrder({
       requested: position?.scale ?? 1,
       finalScale
     });
+    finalScale = Math.max(0, Math.min(1, finalScale));
+
   } catch (e) {
     console.warn('⚠️ Contain-scale calc failed (front):', e.message);
   }
@@ -462,6 +467,7 @@ if (uploadedBack) {
       Ih: uploadedBack?.height,
       requested: requestedBack,
     });
+    finalBackScale = Math.max(0, Math.min(1, finalBackScale));
     console.log('🧮 Back scale', { backKey, requestedBack, finalBackScale });
   } catch (e) {
     console.warn('⚠️ Contain-scale calc failed (back):', e.message);
