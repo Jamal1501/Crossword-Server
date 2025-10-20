@@ -490,7 +490,10 @@ export async function createOrder({
       quantity: Math.max(1, Number(quantity) || 1),
       print_provider_id: printProviderId,
       blueprint_id: blueprintId,
-      print_areas: printAreas
+      print_areas: [{
+    // variant_ids: [parseInt(variantId)], // optional
+    placeholders: [ /* front (+ front_cover) (+ back) as built above */ ]
+  }]
     }],
     shipping_method: 1,
     send_shipping_notification: true,
