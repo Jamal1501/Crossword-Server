@@ -179,12 +179,11 @@ async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
 }
 
 // Allow enlarging to fully contain within the placeholder box
- function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
-   if (!Aw || !Ah || !Iw || !Ih) return requested ?? 1;
-   const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih));
-   const factor = (requested ??0.90);      // 1 = full contain, 0.9 = 90% of contain
-   return Math.max(0, sMax * factor);
- }
+function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
+  if (!Aw || !Ah || !Iw || !Ih) return requested ?? 1;
+  const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih)); // Printify scale = fraction of area width
+  return Math.max(0, sMax * (requested ?? 1));      // requested=1 → full contain
+}
 
 
 /* --------------------------
