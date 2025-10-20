@@ -179,11 +179,12 @@ async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
 }
 
 // Allow enlarging to fully contain within the placeholder box
-function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
-  if (!Aw || !Ah || !Iw || !Ih) return requested ?? 1;
-  const contain = Math.min(Aw / Iw, Ah / Ih); // can be > 1 when image is smaller
-  return contain * (requested ?? 1);
-}
+ function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
+   if (!Aw || !Ah || !Iw || !Ih) return requested ?? 1;
+   const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih));
+   const factor = (requested ??0.95);      // 1 = full contain, 0.9 = 90% of contain
+   return Math.max(0, sMax * factor);
+ }
 
 
 /* --------------------------
