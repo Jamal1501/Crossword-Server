@@ -379,111 +379,109 @@ export async function createOrder({
     throw e;
   }
 
-  // 4) Contain-fit scale for FRONT (avoid clipping), using your contain helper
-  let finalScale = position?.scale ?? 0.9;
+  // 4) Contain-fit scale for FRONT (avoid clipping)
+  const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
+  let requestedFrontScale = (position?.scale ?? 1) * FRONT_SCALE_MULT;
+  let finalScale = requestedFrontScale;
   try {
     const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
     finalScale = clampContainScale({
       Aw: ph?.width, Ah: ph?.height,
       Iw: uploadedFront?.width, Ih: uploadedFront?.height,
-      requested: finalScale
+      requested: requestedFrontScale
     });
+    finalScale = Math.max(0, Math.min(1, finalScale)); // hard clamp
     console.log('🧮 Scale containment (front)', {
       Aw: ph?.width, Ah: ph?.height,
       Iw: uploadedFront?.width, Ih: uploadedFront?.height,
-      requested: position?.scale ?? 1,
+      requested: requestedFrontScale,
       finalScale
     });
-    finalScale = Math.max(0, Math.min(1, finalScale));
-
   } catch (e) {
     console.warn('⚠️ Contain-scale calc failed (front):', e.message);
   }
 
-// 5) Build print_areas map for ORDERS endpoint (expects src + coords)
-const frontSrc =
-  uploadedFront?.file_url ||
-  uploadedFront?.preview_url ||
-  uploadedFront?.url ||
-  uploadedFront; // fallback string
+  // 5) Build print_areas map (src + coords)
+  const frontSrc =
+    uploadedFront?.file_url ||
+    uploadedFront?.preview_url ||
+    uploadedFront?.url ||
+    uploadedFront; // fallback string
 
-let requiredPlaceholders = ['front'];
-try {
-  requiredPlaceholders = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
-  if (!Array.isArray(requiredPlaceholders) || requiredPlaceholders.length === 0) {
+  let requiredPlaceholders = ['front'];
+  try {
+    requiredPlaceholders = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
+    if (!Array.isArray(requiredPlaceholders) || requiredPlaceholders.length === 0) {
+      requiredPlaceholders = ['front'];
+    }
+  } catch {
     requiredPlaceholders = ['front'];
   }
-} catch {
-  requiredPlaceholders = ['front'];
-}
 
-// FRONT area (always)
-const printAreas = {
-  front: [{
-    src: frontSrc,
-    x: position?.x ?? 0.5,
-    y: position?.y ?? 0.5,
-    scale: finalScale,
-    angle: position?.angle ?? 0,
-  }],
-};
+  const printAreas = {
+    front: [{
+      src: frontSrc,
+      x: position?.x ?? 0.5,
+      y: position?.y ?? 0.5,
+      scale: finalScale,
+      angle: position?.angle ?? 0,
+    }],
+  };
 
-// FRONT-COVER clone if needed
-if (requiredPlaceholders.includes('front_cover')) {
-  printAreas.front_cover = [{
-    src: frontSrc,
-    x: position?.x ?? 0.5,
-    y: position?.y ?? 0.5,
-    scale: finalScale,
-    angle: position?.angle ?? 0,
-  }];
-}
-
-// BACK area (only if provided)
-if (uploadedBack) {
-  const backSrc =
-    uploadedBack?.file_url ||
-    uploadedBack?.preview_url ||
-    uploadedBack?.url ||
-    uploadedBack;
-
-  const nonFront = requiredPlaceholders.filter(n => n !== 'front' && n !== 'front_cover');
-  const backKey = requiredPlaceholders.includes('back') ? 'back' : (nonFront[0] || 'back');
-
-  const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
-  const bx = backPosition?.x ?? 0.5;
-  const by = backPosition?.y ?? 0.5;
-  const ba = backPosition?.angle ?? 0;
-  const requestedBack =
-    (typeof backPosition?.scale === 'number' ? backPosition.scale : (position?.scale ?? 1)) * BACK_SCALE_MULT;
-
-  let finalBackScale = requestedBack;
-  try {
-    const ph = await getVariantPlaceholderByPos(blueprintId, printProviderId, parseInt(variantId), backKey);
-    finalBackScale = clampContainScale({
-      Aw: ph?.width,
-      Ah: ph?.height,
-      Iw: uploadedBack?.width,
-      Ih: uploadedBack?.height,
-      requested: requestedBack,
-    });
-    finalBackScale = Math.max(0, Math.min(1, finalBackScale));
-    console.log('🧮 Back scale', { backKey, requestedBack, finalBackScale });
-  } catch (e) {
-    console.warn('⚠️ Contain-scale calc failed (back):', e.message);
+  if (requiredPlaceholders.includes('front_cover')) {
+    printAreas.front_cover = [{
+      src: frontSrc,
+      x: position?.x ?? 0.5,
+      y: position?.y ?? 0.5,
+      scale: finalScale,
+      angle: position?.angle ?? 0,
+    }];
   }
 
-  printAreas[backKey] = [{
-    src: backSrc,
-    x: bx,
-    y: by,
-    scale: finalBackScale,
-    angle: ba,
-  }];
-}
+  // BACK area (optional)
+  if (uploadedBack) {
+    const backSrc =
+      uploadedBack?.file_url ||
+      uploadedBack?.preview_url ||
+      uploadedBack?.url ||
+      uploadedBack;
 
+    const nonFront = requiredPlaceholders.filter(n => n !== 'front' && n !== 'front_cover');
+    const backKey = requiredPlaceholders.includes('back') ? 'back' : (nonFront[0] || 'back');
 
-  // 6) Final order payload (print_areas as array with one object that has placeholders)
+    const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
+    const bx = backPosition?.x ?? 0.5;
+    const by = backPosition?.y ?? 0.5;
+    const ba = backPosition?.angle ?? 0;
+    const requestedBack =
+      (typeof backPosition?.scale === 'number' ? backPosition.scale : (position?.scale ?? 1)) * BACK_SCALE_MULT;
+
+    let finalBackScale = requestedBack;
+    try {
+      const ph = await getVariantPlaceholderByPos(blueprintId, printProviderId, parseInt(variantId), backKey);
+      finalBackScale = clampContainScale({
+        Aw: ph?.width,
+        Ah: ph?.height,
+        Iw: uploadedBack?.width,
+        Ih: uploadedBack?.height,
+        requested: requestedBack,
+      });
+      finalBackScale = Math.max(0, Math.min(1, finalBackScale)); // hard clamp
+      console.log('🧮 Back scale', { backKey, requestedBack, finalBackScale });
+    } catch (e) {
+      console.warn('⚠️ Contain-scale calc failed (back):', e.message);
+    }
+
+    printAreas[backKey] = [{
+      src: backSrc,
+      x: bx,
+      y: by,
+      scale: finalBackScale,
+      angle: ba,
+    }];
+  }
+
+  // 6) Final order payload
   const payload = {
     external_id: `order-${Date.now()}`,
     label: 'Crossword Custom Order',
