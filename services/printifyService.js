@@ -513,7 +513,7 @@ export async function createOrder({
         ...Object.fromEntries(
           placeholdersArr.map(p => [
             p.position,
-            p.images[0]  // Extract the image object directly
+            p.images // Extract the image object directly
           ])
         )
       }
