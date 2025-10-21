@@ -537,6 +537,17 @@ const payload = {
 
 console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
 
+    // 7) Create the order at Printify and return response
+  const orderUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
+  const orderResp = await safeFetch(orderUrl, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+  return orderResp;
+} // <-- CLOSES createOrder
+
+
 /* -------------------------- Product preview updaters --------------------------- */
 
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement, imageMeta) {
