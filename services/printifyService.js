@@ -401,13 +401,7 @@ export async function createOrder({
     console.warn('⚠️ Contain-scale calc failed (front):', e.message);
   }
 
-  // 5) Build print_areas map (src + coords)
-  const frontSrc =
-    uploadedFront?.file_url ||
-    uploadedFront?.preview_url ||
-    uploadedFront?.url ||
-    uploadedFront; // fallback string
-
+  // 5) Get required placeholder names
   let requiredPlaceholders = ['front'];
   try {
     requiredPlaceholders = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
@@ -418,34 +412,52 @@ export async function createOrder({
     requiredPlaceholders = ['front'];
   }
 
-  const printAreas = {
-    front: [{
-      src: frontSrc,
-      x: position?.x ?? 0.5,
-      y: position?.y ?? 0.5,
-      scale: finalScale,
-      angle: position?.angle ?? 0,
-    }],
-  };
+  // 6) Extract image URLs
+  const frontSrc =
+    uploadedFront?.preview_url ||
+    uploadedFront?.file_url ||
+    uploadedFront?.url ||
+    uploadedFront; // fallback string
 
-  if (requiredPlaceholders.includes('front_cover')) {
-    printAreas.front_cover = [{
-      src: frontSrc,
+  // 7) Build placeholders array
+  const placeholdersArr = [];
+
+  // FRONT placeholder
+  placeholdersArr.push({
+    position: 'front',
+    images: [{
+      id: uploadedFront?.id || undefined,
+      name: uploadedFront?.file_name || 'front.png',
+      type: 'image/png',
+      height: uploadedFront?.height || 0,
+      width: uploadedFront?.width || 0,
       x: position?.x ?? 0.5,
       y: position?.y ?? 0.5,
       scale: finalScale,
-      angle: position?.angle ?? 0,
-    }];
+      angle: position?.angle ?? 0
+    }]
+  });
+
+  // FRONT_COVER (if required)
+  if (requiredPlaceholders.includes('front_cover')) {
+    placeholdersArr.push({
+      position: 'front_cover',
+      images: [{
+        id: uploadedFront?.id || undefined,
+        name: uploadedFront?.file_name || 'front.png',
+        type: 'image/png',
+        height: uploadedFront?.height || 0,
+        width: uploadedFront?.width || 0,
+        x: position?.x ?? 0.5,
+        y: position?.y ?? 0.5,
+        scale: finalScale,
+        angle: position?.angle ?? 0
+      }]
+    });
   }
 
-  // BACK area (optional)
+  // BACK placeholder (if back image uploaded)
   if (uploadedBack) {
-    const backSrc =
-      uploadedBack?.file_url ||
-      uploadedBack?.preview_url ||
-      uploadedBack?.url ||
-      uploadedBack;
-
     const nonFront = requiredPlaceholders.filter(n => n !== 'front' && n !== 'front_cover');
     const backKey = requiredPlaceholders.includes('back') ? 'back' : (nonFront[0] || 'back');
 
@@ -472,72 +484,57 @@ export async function createOrder({
       console.warn('⚠️ Contain-scale calc failed (back):', e.message);
     }
 
-    printAreas[backKey] = [{
-      src: backSrc,
-      x: bx,
-      y: by,
-      scale: finalBackScale,
-      angle: ba,
-    }];
+    placeholdersArr.push({
+      position: backKey,
+      images: [{
+        id: uploadedBack?.id || undefined,
+        name: uploadedBack?.file_name || 'back.png',
+        type: 'image/png',
+        height: uploadedBack?.height || 0,
+        width: uploadedBack?.width || 0,
+        x: bx,
+        y: by,
+        scale: finalBackScale,
+        angle: ba
+      }]
+    });
   }
 
-  // Build placeholders array from your computed printAreas object
-const placeholdersArr = [];
+  // 8) Final order payload
+  const payload = {
+    external_id: `order-${Date.now()}`,
+    label: 'Crossword Custom Order',
+    line_items: [{
+      variant_id: parseInt(variantId),
+      quantity: Math.max(1, Number(quantity) || 1),
+      print_provider_id: printProviderId,
+      blueprint_id: blueprintId,
+      print_areas: {
+        ...Object.fromEntries(
+          placeholdersArr.map(p => [
+            p.position,
+            p.images[0]  // Extract the image object directly
+          ])
+        )
+      }
+    }],
+    shipping_method: 1,
+    send_shipping_notification: true,
+    address_to: {
+      first_name: recipient.name?.split(' ')[0] || '-',
+      last_name: recipient.name?.split(' ').slice(1).join(' ') || '-',
+      email: recipient.email,
+      address1: recipient.address1,
+      city: recipient.city,
+      country: recipient.country,
+      zip: recipient.zip,
+      phone: recipient.phone || ''
+    }
+  };
 
-// FRONT
-placeholdersArr.push({
-  position: 'front',
-  images: [ printAreas.front[0] ]
-});
+  console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
 
-// FRONT_COVER (optional)
-if (printAreas.front_cover) {
-  placeholdersArr.push({
-    position: 'front_cover',
-    images: [ printAreas.front_cover[0] ]
-  });
-}
-
-// BACK (optional — key may vary)
-const backKeyCandidate = Object.keys(printAreas).find(k => k !== 'front' && k !== 'front_cover');
-if (backKeyCandidate) {
-  placeholdersArr.push({
-    position: backKeyCandidate,
-    images: [ printAreas[backKeyCandidate][0] ]
-  });
-}
-
-// 6) Final order payload (placeholders-array shape)
-const payload = {
-  external_id: `order-${Date.now()}`,
-  label: 'Crossword Custom Order',
-  line_items: [{
-    variant_id: parseInt(variantId),
-    quantity: Math.max(1, Number(quantity) || 1),
-    print_provider_id: printProviderId,
-    blueprint_id: blueprintId,
-    print_areas: [{
-      // variant_ids: [parseInt(variantId)], // optional
-      placeholders: placeholdersArr
-    }]
-  }],
-  shipping_method: 1,
-  send_shipping_notification: true,
-  address_to: {
-    first_name: recipient.name?.split(' ')[0] || '-',
-    last_name: recipient.name?.split(' ').slice(1).join(' ') || '-',
-    email: recipient.email,
-    address1: recipient.address1,
-    city: recipient.city,
-    country: recipient.country,
-    zip: recipient.zip,
-    phone: recipient.phone || ''
-  }
-};
-
-console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
-
-    // 7) Create the order at Printify and return response
+  // 9) Create the order at Printify and return response
   const orderUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
   const orderResp = await safeFetch(orderUrl, {
     method: 'POST',
@@ -545,8 +542,7 @@ console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 
     body: JSON.stringify(payload)
   });
   return orderResp;
-} // <-- CLOSES createOrder
-
+}
 
 /* -------------------------- Product preview updaters --------------------------- */
 
