@@ -568,6 +568,7 @@ try {
   });
 }
 }
+  }
 
 app.post('/webhooks/orders/create', async (req, res) => {
   // req.body is a Buffer because of bodyParser.raw() mounted earlier for this path
