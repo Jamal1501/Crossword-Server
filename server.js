@@ -1130,6 +1130,10 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
       return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
     }
 
+// 0) Snapshot current images so we can return only the new mockups
+    const before = await fetchProduct(productId);
+    const beforeSrcs = new Set((before?.images || []).map(i => i?.src).filter(Boolean));
+    
     // 1. Upload the crossword image
     const uploaded = await uploadImageFromUrl(imageUrl);
     let uploadedBack = null;
@@ -1152,7 +1156,17 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
       await new Promise(r => setTimeout(r, 1200)); // ~12s max
     }
 
-    res.json({ success: true, uploadedImage: uploaded, product });
+       // 4) Delta: only new images (prefer images tagged with this variant)
+   const afterImgs = Array.isArray(product?.images) ? product.images : [];
+   const deltas = afterImgs.filter(i => i?.src && !beforeSrcs.has(i.src));
+   const vId = Number(variantId);
+   const tagged = deltas.filter(i => {
+     const ids = Array.isArray(i.variant_ids) ? i.variant_ids.map(Number) : null;
+     return !ids || ids.includes(vId);
+   });
+   const imgs = (tagged.length ? tagged : deltas).map(i => i.src).filter(Boolean);
+
+    res.json({ success: true, uploadedImage: uploaded, product, imgs });
   } catch (err) {
     console.error("❌ Preview generation failed:", err.message);
     res.status(500).json({ error: err.message });
