@@ -530,25 +530,43 @@ const backPosition = { x: 0.5, y: 0.5, scale: backScale, angle: 0 };
 // --- make sure 'area' exists before you pass it below ---
 const area = printAreas?.[shopifyVid] || null;
 
+// --- build recipient from the Shopify order (shipping address) ---
+const r = order?.shipping_address || {};
+const recipient = {
+  name: [r.first_name, r.last_name].filter(Boolean).join(' ') || r.name || 'Customer',
+  email: (order?.email || order?.customer?.email || '').trim() || undefined,
+  phone: (r.phone || order?.phone || '').trim() || undefined,
+  address1: r.address1 || '',
+  address2: r.address2 || '',
+  city: r.city || '',
+  region: r.province || r.province_code || '',
+  country: r.country_code || r.country || '',
+  zip: r.zip || ''
+};
+
 // --- finally, call createOrder ---
 const backImageUrl =
   item.clue_output_mode === 'back' && item.clues_image_url ? item.clues_image_url : undefined;
 
-await createOrder({
-  imageUrl: item.custom_image,
-  backImageUrl,
-  variantId: printifyVariantId,
-  quantity: item.quantity,
-  position,
-  backPosition,
-  recipient,
-  printArea: area || undefined,
-  meta: { shopifyVid, title: item.title }
-});
+try {
+  const response = await createOrder({
+    imageUrl: item.custom_image,
+    backImageUrl,
+    variantId: printifyVariantId,
+    quantity: item.quantity,
+    position,
+    backPosition,
+    recipient,
+    printArea: area || undefined,
+    meta: { shopifyVid, title: item.title }
+  });
 
   console.log('✅ Printify order created:', response?.id || '[no id]', { shopifyVid, printifyVariantId, scale });
 } catch (err) {
-  console.error('❌ Failed to create Printify order:', { shopifyVid, printifyVariantId, scale, err: err?.message || err });
+  console.error('❌ Failed to create Printify order:', {
+    shopifyVid, printifyVariantId, scale, err: err?.message || err
+  });
+}
 }
 
 app.post('/webhooks/orders/create', async (req, res) => {
