@@ -1570,23 +1570,43 @@ app.all('/preview-pdf', async (req, res) => {
       opts: { scale }
     });
 
-    // Optional: overlay watermark without affecting layout
-    if (watermark) {
-      const doc = await PDFDocument.load(pdfBytes);
-      const pages = doc.getPages();
-      for (const page of pages) {
-        const { width: a4w, height: a4h } = page.getSize();
-        page.drawText('PREVIEW', {
-          x: a4w * 0.18,
-          y: a4h * 0.45,
-          size: 64,
+// Optional: overlay tiled/small watermark without affecting layout
+if (watermark) {
+  const doc = await PDFDocument.load(pdfBytes);
+  const pages = doc.getPages();
+
+  // --- Tweak these if you want ---
+  const WM_TEXT   = 'LOVEFRAMES';
+  const WM_SIZE   = 14;     // small text size
+  const WM_OPAC   = 0.18;   // subtle opacity
+  const WM_ANGLE  = 30;     // degrees
+  const STEP_X    = 140;    // horizontal spacing between repeats
+  const STEP_Y    = 110;    // vertical spacing between repeats
+  const X_OFFSET  = 0;      // shift pattern horizontally if needed
+  const Y_OFFSET  = 0;      // shift pattern vertically if needed
+  // --------------------------------
+
+  for (const page of pages) {
+    const { width: a4w, height: a4h } = page.getSize();
+
+    // Tile beyond page bounds so rotation has full coverage
+    for (let x = -a4w; x < a4w * 2; x += STEP_X) {
+      for (let y = -a4h; y < a4h * 2; y += STEP_Y) {
+        page.drawText(WM_TEXT, {
+          x: x + X_OFFSET,
+          y: y + Y_OFFSET,
+          size: WM_SIZE,
           color: rgb(0.8, 0.1, 0.1),
-          rotate: { type: 'degrees', angle: 35 },
-          opacity: 0.4
+          rotate: { type: 'degrees', angle: WM_ANGLE },
+          opacity: WM_OPAC,
         });
       }
-      pdfBytes = await doc.save();
     }
+  }
+
+  pdfBytes = await doc.save();
+}
+
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="crossword-preview.pdf"');
