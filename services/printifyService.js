@@ -412,12 +412,20 @@ export async function createOrder({
     requiredPlaceholders = ['front'];
   }
 
-  // 6) Extract image URLs
-  const frontSrc =
-    uploadedFront?.preview_url ||
-    uploadedFront?.file_url ||
-    uploadedFront?.url ||
-    uploadedFront; // fallback string
+// 6) Extract image URLs
+const frontSrc =
+  uploadedFront?.preview_url ||
+  uploadedFront?.file_url ||
+  uploadedFront?.url ||
+  imageUrl; // final fallback to original url
+
+const backSrc = uploadedBack
+  ? (uploadedBack?.preview_url ||
+     uploadedBack?.file_url ||
+     uploadedBack?.url ||
+     backImageUrl)
+  : null;
+
 
   // 7) Build placeholders array
   const placeholdersArr = [];
@@ -427,6 +435,7 @@ export async function createOrder({
     position: 'front',
     images: [{
       id: uploadedFront?.id || undefined,
+      src: frontSrc,
       name: uploadedFront?.file_name || 'front.png',
       type: 'image/png',
       height: uploadedFront?.height || 0,
@@ -444,6 +453,7 @@ export async function createOrder({
       position: 'front_cover',
       images: [{
         id: uploadedFront?.id || undefined,
+        src: frontSrc,
         name: uploadedFront?.file_name || 'front.png',
         type: 'image/png',
         height: uploadedFront?.height || 0,
@@ -488,6 +498,7 @@ export async function createOrder({
       position: backKey,
       images: [{
         id: uploadedBack?.id || undefined,
+        src: frontSrc,
         name: uploadedBack?.file_name || 'back.png',
         type: 'image/png',
         height: uploadedBack?.height || 0,
@@ -500,11 +511,14 @@ export async function createOrder({
     });
   }
 
-  const printAreas = Object.fromEntries(
-  placeholdersArr
-    .map(p => [p.position, (p.images || []).filter(img => img && (img.id || img.url))])
-    .filter(([_, imgs]) => imgs.length > 0)
-);
+ const printAreas = Object.fromEntries(
+   placeholdersArr
+    .map(p => [
+       p.position,
+       (p.images || []).filter(img => img && (img.id || img.url || img.src)) // include src
+     ])
+     .filter(([_, imgs]) => imgs.length > 0)
+ );
 
   
 const payload = {
