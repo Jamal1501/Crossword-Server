@@ -522,8 +522,18 @@ const payload = {
 function upsertPlaceholder(placeholders, position, images) {
   const list = Array.isArray(placeholders) ? placeholders : [];
   const rest = list.filter(p => p && p.position !== position);
-  return [...rest, { position, images }];
+  return normalizePlaceholders([...rest, { position, images }]);
 }
+
+/* Ensure every placeholder has an images array */
+function normalizePlaceholders(placeholders) {
+  const list = Array.isArray(placeholders) ? placeholders : [];
+  return list.map(p => ({
+    position: p?.position || 'front',
+    images: Array.isArray(p?.images) ? p.images : []
+  }));
+}
+
 
 /* -------------------------- Product preview updaters --------------------------- */
 
@@ -546,13 +556,15 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
       const selectedArea = {
         ...area,
         variant_ids: [vId],
-        placeholders: upsertPlaceholder(area.placeholders, "front", [{
+        placeholders: normalizePlaceholders(
++     upsertPlaceholder(area.placeholders, "front", [{
           id: uploadedImageId,
           x: placement?.x ?? 0.5,
           y: placement?.y ?? 0.5,
           scale: placement?.scale ?? 1,
           angle: placement?.angle ?? 0
         }])
+          )
       };
       newAreas.push(selectedArea);
 
@@ -570,7 +582,7 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
   if (!handled) {
     newAreas.push({
       variant_ids: [vId],
-      placeholders: [{
+      placeholders: normalizePlaceholders([{
         position: "front",
         images: [{
           id: uploadedImageId,
@@ -579,7 +591,7 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
           scale: placement?.scale ?? 1,
           angle: placement?.angle ?? 0
         }]
-      }]
+      }])
     });
   }
 
@@ -629,7 +641,8 @@ export async function applyImagesToProductDual(
       const remaining = ids.filter(id => id !== vId);
 
       // Build placeholders for selected variant:
-      let placeholders = area.placeholders || [];
+      let placeholders = normalizePlaceholders(area.placeholders || []);
+
       placeholders = upsertPlaceholder(placeholders, "front", [{
         id: frontImageId,
         x: frontPlacement?.x ?? 0.5,
@@ -645,12 +658,19 @@ export async function applyImagesToProductDual(
         angle: finalBackPlacement.angle ?? 0
       }]);
 
-      const selectedArea = { ...area, variant_ids: [vId], placeholders };
-      newAreas.push(selectedArea);
+const selectedArea = {
+   ...area,
+   variant_ids: [vId],
+   placeholders: normalizePlaceholders(placeholders)
+ };
+    newAreas.push(selectedArea);
 
       if (remaining.length) {
-        newAreas.push({ ...area, variant_ids: remaining });
-      }
+   newAreas.push({
+     ...area,
+     variant_ids: remaining,
+     placeholders: normalizePlaceholders(area.placeholders)
+  });      }
       handled = true;
     } else {
       newAreas.push(area);
@@ -660,7 +680,7 @@ export async function applyImagesToProductDual(
   if (!handled) {
     newAreas.push({
       variant_ids: [vId],
-      placeholders: [
+     placeholders: normalizePlaceholders([
         {
           position: "front",
           images: [{
@@ -681,7 +701,7 @@ export async function applyImagesToProductDual(
             angle: finalBackPlacement.angle ?? 0
           }]
         }
-      ]
+      ])
     });
   }
 
