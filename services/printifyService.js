@@ -511,6 +511,23 @@ const payload = {
   return orderResp;
 }
 
+/* -------------------------- tiny util --------------------------- */
+/**
+ * Replace or insert a placeholder by position while preserving others.
+ * @param {Array<{position:string, images:Array}>} placeholders
+ * @param {string} position  e.g. "front" | "back" | "front_cover"
+ * @param {Array<Object>} images  array of image objects for this position
+ * @returns {Array} new placeholders array
+ */
+function upsertPlaceholder(placeholders, position, images) {
+  const list = Array.isArray(placeholders) ? placeholders : [];
+  const rest = list.filter(p => p && p.position !== position);
+  return [...rest, { position, images }];
+}
+
+/* -------------------------- Product preview updaters --------------------------- */
+
+
 /* -------------------------- Product preview updaters --------------------------- */
 
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
