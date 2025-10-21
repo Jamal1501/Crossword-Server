@@ -62,7 +62,7 @@ async function providerHasVariant(bp, pp, variantId) {
   }
 }
 
-async function getVariantPlaceholderByPos(blueprintId, printProviderId, variantId, pos = 'front') {
+export async function getVariantPlaceholderByPos(blueprintId, printProviderId, variantId, pos = 'front') {
   const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
   const data = await safeFetch(url, { headers: authHeaders() });
   const v = data?.variants?.find(v => v.id === parseInt(variantId));
@@ -75,7 +75,7 @@ async function getVariantPlaceholderByPos(blueprintId, printProviderId, variantI
  * 2) If that product is junk (bp invalid or provider doesn’t offer the variant), scan other
  *    (bp,pp) combos from your filtered products and pick the first that truly offers it.
  */
-async function resolveBpPpForVariant(variantId) {
+export async function resolveBpPpForVariant(variantId) {
   const products = await fetchAllProductsPagedFiltered();
 
   // Try direct product that includes this variant
