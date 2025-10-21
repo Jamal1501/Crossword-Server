@@ -513,28 +513,60 @@ const payload = {
 
 /* -------------------------- Product preview updaters --------------------------- */
 
-export async function applyImageToProduct(productId, variantId, uploadedImageId, placement, imageMeta) {
+export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
-  const onlyThisVariant = [Number(variantId)];
-  const updatedPrintAreas = product.print_areas.map(area => ({
-    ...area,
-    variant_ids: onlyThisVariant,
-    placeholders: [
-      {
-        position: "front",
-        images: [
-          {
-            id: uploadedImageId,
-            x: placement?.x ?? 0.5,
-            y: placement?.y ?? 0.5,
-            scale: placement?.scale ?? 1,
-            angle: placement?.angle ?? 0
-          }
-        ]
+
+  const vId = Number(variantId);
+  const newAreas = [];
+  let handled = false;
+
+  for (const area of (product.print_areas || [])) {
+    const ids = (area.variant_ids || []).map(Number);
+    if (ids.includes(vId)) {
+      // split this area
+      const remaining = ids.filter(id => id !== vId);
+
+      // area for the selected variant (inject our FRONT)
+      const selectedArea = {
+        ...area,
+        variant_ids: [vId],
+        placeholders: upsertPlaceholder(area.placeholders, "front", [{
+          id: uploadedImageId,
+          x: placement?.x ?? 0.5,
+          y: placement?.y ?? 0.5,
+          scale: placement?.scale ?? 1,
+          angle: placement?.angle ?? 0
+        }])
+      };
+      newAreas.push(selectedArea);
+
+      // original area minus the selected variant (unchanged placeholders)
+      if (remaining.length) {
+        newAreas.push({ ...area, variant_ids: remaining });
       }
-    ]
-  }));
+      handled = true;
+    } else {
+      newAreas.push(area);
+    }
+  }
+
+  // If no area contained this variant (edge case), create a minimal one
+  if (!handled) {
+    newAreas.push({
+      variant_ids: [vId],
+      placeholders: [{
+        position: "front",
+        images: [{
+          id: uploadedImageId,
+          x: placement?.x ?? 0.5,
+          y: placement?.y ?? 0.5,
+          scale: placement?.scale ?? 1,
+          angle: placement?.angle ?? 0
+        }]
+      }]
+    });
+  }
 
   const payload = {
     title: product.title,
@@ -542,7 +574,7 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    print_areas: updatedPrintAreas
+    print_areas: newAreas
   };
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
@@ -553,7 +585,7 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
   });
 }
 
-// Apply front + back images to a product (used for previews)
+
 export async function applyImagesToProductDual(
   productId,
   variantId,
@@ -564,7 +596,8 @@ export async function applyImagesToProductDual(
 ) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
-  const onlyThisVariant = [Number(variantId)];
+
+  const vId = Number(variantId);
   const finalBackPlacement = backPlacement || {
     x: frontPlacement?.x ?? 0.5,
     y: frontPlacement?.y ?? 0.5,
@@ -572,32 +605,70 @@ export async function applyImagesToProductDual(
     angle: frontPlacement?.angle ?? 0,
   };
 
-  const updatedPrintAreas = product.print_areas.map(area => ({
-    ...area,
-    variant_ids: onlyThisVariant,
-    placeholders: [
-      {
-        position: "front",
-        images: [{
-          id: frontImageId,
-          x: frontPlacement?.x ?? 0.5,
-          y: frontPlacement?.y ?? 0.5,
-          scale: frontPlacement?.scale ?? 0.9,
-          angle: frontPlacement?.angle ?? 0
-        }]
-      },
-      {
-        position: "back",
-        images: [{
-          id: backImageId,
-          x: finalBackPlacement.x ?? 0.5,
-          y: finalBackPlacement.y ?? 0.5,
-          scale: finalBackPlacement.scale ?? 1,
-          angle: finalBackPlacement.angle ?? 0
-        }]
+  const newAreas = [];
+  let handled = false;
+
+  for (const area of (product.print_areas || [])) {
+    const ids = (area.variant_ids || []).map(Number);
+    if (ids.includes(vId)) {
+      const remaining = ids.filter(id => id !== vId);
+
+      // Build placeholders for selected variant:
+      let placeholders = area.placeholders || [];
+      placeholders = upsertPlaceholder(placeholders, "front", [{
+        id: frontImageId,
+        x: frontPlacement?.x ?? 0.5,
+        y: frontPlacement?.y ?? 0.5,
+        scale: frontPlacement?.scale ?? 0.9,
+        angle: frontPlacement?.angle ?? 0
+      }]);
+      placeholders = upsertPlaceholder(placeholders, "back", [{
+        id: backImageId,
+        x: finalBackPlacement.x ?? 0.5,
+        y: finalBackPlacement.y ?? 0.5,
+        scale: finalBackPlacement.scale ?? 1,
+        angle: finalBackPlacement.angle ?? 0
+      }]);
+
+      const selectedArea = { ...area, variant_ids: [vId], placeholders };
+      newAreas.push(selectedArea);
+
+      if (remaining.length) {
+        newAreas.push({ ...area, variant_ids: remaining });
       }
-    ]
-  }));
+      handled = true;
+    } else {
+      newAreas.push(area);
+    }
+  }
+
+  if (!handled) {
+    newAreas.push({
+      variant_ids: [vId],
+      placeholders: [
+        {
+          position: "front",
+          images: [{
+            id: frontImageId,
+            x: frontPlacement?.x ?? 0.5,
+            y: frontPlacement?.y ?? 0.5,
+            scale: frontPlacement?.scale ?? 0.9,
+            angle: frontPlacement?.angle ?? 0
+          }]
+        },
+        {
+          position: "back",
+          images: [{
+            id: backImageId,
+            x: finalBackPlacement.x ?? 0.5,
+            y: finalBackPlacement.y ?? 0.5,
+            scale: finalBackPlacement.scale ?? 1,
+            angle: finalBackPlacement.angle ?? 0
+          }]
+        }
+      ]
+    });
+  }
 
   const payload = {
     title: product.title,
@@ -605,7 +676,7 @@ export async function applyImagesToProductDual(
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    print_areas: updatedPrintAreas
+    print_areas: newAreas
   };
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
@@ -615,6 +686,7 @@ export async function applyImagesToProductDual(
     body: JSON.stringify(payload)
   });
 }
+
 
 export async function fetchProduct(productId) {
   if (!productId) {
