@@ -524,6 +524,35 @@ function upsertPlaceholder(placeholders, position, images) {
   const rest = list.filter(p => p && p.position !== position);
   return normalizePlaceholders([...rest, { position, images }]);
 }
+/* Ensure every placeholder has an images array */
+function normalizePlaceholders(placeholders) {
+  const list = Array.isArray(placeholders) ? placeholders : [];
+  return list.map(p => ({
+    position: p?.position || 'front',
+    images: Array.isArray(p?.images) ? p.images : []
+  }));
+}
+
+/* Ensure an area object always has a placeholders array */
+function withPlaceholders(area) {
+  return {
+    ...area,
+    placeholders: normalizePlaceholders(area?.placeholders)
+  };
+}
+
+/* Ensure the whole print_areas array is valid; if missing, create one */
+function normalizeAreas(print_areas, allVariantIds = []) {
+  const arr = Array.isArray(print_areas) ? print_areas : [];
+  if (!arr.length) {
+    return [{
+      variant_ids: allVariantIds.length ? allVariantIds : [],
+      placeholders: []
+    }];
+  }
+  return arr.map(withPlaceholders);
+}
+
 
 /* Ensure every placeholder has an images array */
 function normalizePlaceholders(placeholders) {
@@ -536,49 +565,46 @@ function normalizePlaceholders(placeholders) {
 
 
 /* -------------------------- Product preview updaters --------------------------- */
-
-
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
 
   const vId = Number(variantId);
+  const allVariantIds = (product?.variants || []).map(v => Number(v.id));
+  const areas = normalizeAreas(product.print_areas, allVariantIds);
+
   const newAreas = [];
   let handled = false;
 
-  for (const area of (product.print_areas || [])) {
+  for (const area0 of areas) {
+    const area = withPlaceholders(area0);
     const ids = (area.variant_ids || []).map(Number);
+
     if (ids.includes(vId)) {
-      // split this area
       const remaining = ids.filter(id => id !== vId);
 
-      // area for the selected variant (inject our FRONT)
       const selectedArea = {
         ...area,
         variant_ids: [vId],
-        placeholders: normalizePlaceholders(
-+     upsertPlaceholder(area.placeholders, "front", [{
+        placeholders: upsertPlaceholder(area.placeholders, "front", [{
           id: uploadedImageId,
           x: placement?.x ?? 0.5,
           y: placement?.y ?? 0.5,
           scale: placement?.scale ?? 1,
           angle: placement?.angle ?? 0
         }])
-          )
       };
-      newAreas.push(selectedArea);
+      newAreas.push(withPlaceholders(selectedArea));
 
-      // original area minus the selected variant (unchanged placeholders)
       if (remaining.length) {
-        newAreas.push({ ...area, variant_ids: remaining });
+        newAreas.push(withPlaceholders({ ...area, variant_ids: remaining }));
       }
       handled = true;
     } else {
-      newAreas.push(area);
+      newAreas.push(withPlaceholders(area));
     }
   }
 
-  // If no area contained this variant (edge case), create a minimal one
   if (!handled) {
     newAreas.push({
       variant_ids: [vId],
@@ -601,7 +627,7 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    print_areas: newAreas
+    print_areas: normalizeAreas(newAreas, allVariantIds)
   };
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
@@ -625,6 +651,9 @@ export async function applyImagesToProductDual(
   const product = await safeFetch(url, { headers: authHeaders() });
 
   const vId = Number(variantId);
+  const allVariantIds = (product?.variants || []).map(v => Number(v.id));
+  const areas = normalizeAreas(product.print_areas, allVariantIds);
+
   const finalBackPlacement = backPlacement || {
     x: frontPlacement?.x ?? 0.5,
     y: frontPlacement?.y ?? 0.5,
@@ -635,14 +664,14 @@ export async function applyImagesToProductDual(
   const newAreas = [];
   let handled = false;
 
-  for (const area of (product.print_areas || [])) {
+  for (const area0 of areas) {
+    const area = withPlaceholders(area0);
     const ids = (area.variant_ids || []).map(Number);
+
     if (ids.includes(vId)) {
       const remaining = ids.filter(id => id !== vId);
 
-      // Build placeholders for selected variant:
       let placeholders = normalizePlaceholders(area.placeholders || []);
-
       placeholders = upsertPlaceholder(placeholders, "front", [{
         id: frontImageId,
         x: frontPlacement?.x ?? 0.5,
@@ -658,29 +687,22 @@ export async function applyImagesToProductDual(
         angle: finalBackPlacement.angle ?? 0
       }]);
 
-const selectedArea = {
-   ...area,
-   variant_ids: [vId],
-   placeholders: normalizePlaceholders(placeholders)
- };
-    newAreas.push(selectedArea);
+      const selectedArea = { ...area, variant_ids: [vId], placeholders };
+      newAreas.push(withPlaceholders(selectedArea));
 
       if (remaining.length) {
-   newAreas.push({
-     ...area,
-     variant_ids: remaining,
-     placeholders: normalizePlaceholders(area.placeholders)
-  });      }
+        newAreas.push(withPlaceholders({ ...area, variant_ids: remaining }));
+      }
       handled = true;
     } else {
-      newAreas.push(area);
+      newAreas.push(withPlaceholders(area));
     }
   }
 
   if (!handled) {
     newAreas.push({
       variant_ids: [vId],
-     placeholders: normalizePlaceholders([
+      placeholders: normalizePlaceholders([
         {
           position: "front",
           images: [{
@@ -711,7 +733,7 @@ const selectedArea = {
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    print_areas: newAreas
+    print_areas: normalizeAreas(newAreas, allVariantIds)
   };
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
