@@ -500,6 +500,12 @@ export async function createOrder({
     });
   }
 
+  const printAreas = Object.fromEntries(
+  placeholdersArr
+    .map(p => [p.position, (p.images || []).filter(img => img && (img.id || img.url))])
+    .filter(([_, imgs]) => imgs.length > 0)
+);
+
   // 8) Final order payload
   const payload = {
     external_id: `order-${Date.now()}`,
