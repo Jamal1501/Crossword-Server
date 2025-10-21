@@ -506,37 +506,30 @@ export async function createOrder({
     .filter(([_, imgs]) => imgs.length > 0)
 );
 
-  // 8) Final order payload
-  const payload = {
-    external_id: `order-${Date.now()}`,
-    label: 'Crossword Custom Order',
-    line_items: [{
-      variant_id: parseInt(variantId),
-      quantity: Math.max(1, Number(quantity) || 1),
-      print_provider_id: printProviderId,
-      blueprint_id: blueprintId,
-      print_areas: {
-        ...Object.fromEntries(
-          placeholdersArr.map(p => [
-            p.position,
-            p.images // Extract the image object directly
-          ])
-        )
-      }
-    }],
-    shipping_method: 1,
-    send_shipping_notification: true,
-    address_to: {
-      first_name: recipient.name?.split(' ')[0] || '-',
-      last_name: recipient.name?.split(' ').slice(1).join(' ') || '-',
-      email: recipient.email,
-      address1: recipient.address1,
-      city: recipient.city,
-      country: recipient.country,
-      zip: recipient.zip,
-      phone: recipient.phone || ''
-    }
-  };
+  
+const payload = {
+  external_id: `order-${Date.now()}`,
+  label: 'Crossword Custom Order',
+  line_items: [{
+    variant_id: parseInt(variantId),
+    quantity: Math.max(1, Number(quantity) || 1),
+    print_provider_id: printProviderId,
+    blueprint_id: blueprintId,
+    print_areas: printAreas
+  }],
+  shipping_method: 1,
+  send_shipping_notification: true,
+  address_to: {
+    first_name: recipient.name?.split(' ')[0] || '-',
+    last_name: recipient.name?.split(' ').slice(1).join(' ') || '-',
+    email: recipient.email,
+    address1: recipient.address1,
+    city: recipient.city,
+    country: recipient.country,
+    zip: recipient.zip,
+    phone: recipient.phone || ''
+  }
+};
 
   console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
 
