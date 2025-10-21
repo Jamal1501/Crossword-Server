@@ -545,6 +545,7 @@ await createOrder({
   printArea: area || undefined,
   meta: { shopifyVid, title: item.title }
 });
+
   console.log('✅ Printify order created:', response?.id || '[no id]', { shopifyVid, printifyVariantId, scale });
 } catch (err) {
   console.error('❌ Failed to create Printify order:', { shopifyVid, printifyVariantId, scale, err: err?.message || err });
