@@ -528,8 +528,6 @@ function upsertPlaceholder(placeholders, position, images) {
 /* -------------------------- Product preview updaters --------------------------- */
 
 
-/* -------------------------- Product preview updaters --------------------------- */
-
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
