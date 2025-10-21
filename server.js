@@ -1582,7 +1582,7 @@ app.all('/preview-pdf', async (req, res) => {
           size: 64,
           color: rgb(0.8, 0.1, 0.1),
           rotate: { type: 'degrees', angle: 35 },
-          opacity: 0.2
+          opacity: 0.4
         });
       }
       pdfBytes = await doc.save();
