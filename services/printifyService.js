@@ -516,12 +516,10 @@ const payload = {
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement, imageMeta) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
-
-  const allVariantIds = product.variants.map(v => v.id);
-
+  const onlyThisVariant = [Number(variantId)];
   const updatedPrintAreas = product.print_areas.map(area => ({
     ...area,
-    variant_ids: allVariantIds,
+    variant_ids: onlyThisVariant,
     placeholders: [
       {
         position: "front",
@@ -566,9 +564,7 @@ export async function applyImagesToProductDual(
 ) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
-
-  const allVariantIds = product.variants.map(v => v.id);
-
+  const onlyThisVariant = [Number(variantId)];
   const finalBackPlacement = backPlacement || {
     x: frontPlacement?.x ?? 0.5,
     y: frontPlacement?.y ?? 0.5,
@@ -578,7 +574,7 @@ export async function applyImagesToProductDual(
 
   const updatedPrintAreas = product.print_areas.map(area => ({
     ...area,
-    variant_ids: allVariantIds,
+    variant_ids: onlyThisVariant,
     placeholders: [
       {
         position: "front",
