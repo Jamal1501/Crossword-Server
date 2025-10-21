@@ -511,14 +511,7 @@ const payload = {
   return orderResp;
 }
 
-/* Ensure every placeholder has an images array */
-function normalizePlaceholders(placeholders) {
-  const list = Array.isArray(placeholders) ? placeholders : [];
-  return list.map(p => ({
-    position: p?.position || 'front',
-    images: Array.isArray(p?.images) ? p.images : []
-  }));
-}
+
 
 /* Ensure an area object always has a placeholders array */
 function withPlaceholders(area) {
