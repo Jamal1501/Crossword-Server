@@ -1165,8 +1165,13 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
      return !ids || ids.includes(vId);
    });
    const imgs = (tagged.length ? tagged : deltas).map(i => i.src).filter(Boolean);
+// keep newest-first for client
+const imgsNewestFirst = imgs.slice().reverse();
 
-    res.json({ success: true, uploadedImage: uploaded, product, imgs });
+// also return the hero so the client can drop it
+const heroSrc = before?.images?.[0]?.src || null;
+    res.json({ success: true, uploadedImage: uploaded, product, imgs: imgsNewestFirst,
+  heroSrc });
   } catch (err) {
     console.error("❌ Preview generation failed:", err.message);
     res.status(500).json({ error: err.message });
