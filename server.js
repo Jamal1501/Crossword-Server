@@ -1594,33 +1594,29 @@ if (watermark) {
   const doc = await PDFDocument.load(pdfBytes);
   const pages = doc.getPages();
 
-  // --- Load your logo image ---
-  const logoUrl = 'https://cdn.shopify.com/s/files/1/0911/1951/8025/files/favi_7871cd6d-7628-4421-813d-e2abc55bd300.png?v=1761211613';
-  const logoBytes = await fetch(logoUrl).then(res => res.arrayBuffer());
-  const logoImage = await doc.embedPng(logoBytes);
-
-  const logoDims = logoImage.scale(0.2); // adjust scaling as needed (try 0.1–0.3)
-
-  // --- Watermark grid settings ---
-  const WM_OPAC   = 0.18;  // transparency
-  const WM_ANGLE  = 30;    // rotation in degrees
-  const STEP_X    = 140;   // horizontal spacing
-  const STEP_Y    = 110;   // vertical spacing
-  const X_OFFSET  = 0;
-  const Y_OFFSET  = 0;
+  // --- Tweak these if you want ---
+  const WM_TEXT   = 'LOVEFRAMES';
+  const WM_SIZE   = 14;     // small text size
+  const WM_OPAC   = 0.18;   // subtle opacity
+  const WM_ANGLE  = 30;     // degrees
+  const STEP_X    = 140;    // horizontal spacing between repeats
+  const STEP_Y    = 110;    // vertical spacing between repeats
+  const X_OFFSET  = 0;      // shift pattern horizontally if needed
+  const Y_OFFSET  = 0;      // shift pattern vertically if needed
+  // --------------------------------
 
   for (const page of pages) {
     const { width: a4w, height: a4h } = page.getSize();
 
-    // Tile beyond page bounds so rotation covers full area
+    // Tile beyond page bounds so rotation has full coverage
     for (let x = -a4w; x < a4w * 2; x += STEP_X) {
       for (let y = -a4h; y < a4h * 2; y += STEP_Y) {
-        page.drawImage(logoImage, {
+        page.drawText(WM_TEXT, {
           x: x + X_OFFSET,
           y: y + Y_OFFSET,
-          width: logoDims.width,
-          height: logoDims.height,
-          rotate: degrees(WM_ANGLE),
+          size: WM_SIZE,
+          color: rgb(0.8, 0.1, 0.1),
+          rotate: { type: 'degrees', angle: WM_ANGLE },
           opacity: WM_OPAC,
         });
       }
@@ -1629,8 +1625,6 @@ if (watermark) {
 
   pdfBytes = await doc.save();
 }
-
-
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="crossword-preview.pdf"');
