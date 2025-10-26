@@ -762,19 +762,34 @@ for (const li of lineItems) {
       }
 
       // send email
-      try {
-        await sendEmailWithAttachment({
-          to,
-          subject: 'Your printable crossword (PDF)',
-          html: `<p>Thanks for your purchase!</p>
-                 <p>Your full PDF for puzzle <strong>${String(pid).slice(0,8)}</strong> is attached. It includes both the grid and clues.</p>`,
-          filename: `crossword-${String(pid).slice(0,8)}.pdf`,
-          pdfBuffer
-        });
-        console.log(`📧 Sent PDF email for puzzle ${pid} to ${to}`);
-      } catch (e) {
-        console.error(`❌ sendEmailWithAttachment failed for puzzle ${pid}:`, e);
-      }
+try {
+  await sendEmailWithAttachment({
+    to,
+    subject: 'Your printable crossword (PDF)',
+    html: `
+      <p>Hi there,</p>
+      <p>Thank you for your purchase! 🎉</p>
+      <p>Your personalized crossword puzzle <strong>${String(pid).slice(0,8)}</strong> is attached as a PDF. It includes:</p>
+      <ul>
+        <li>The crossword grid</li>
+        <li>All the clues you provided</li>
+      </ul>
+      <p>You can:</p>
+      <ul>
+        <li>Print it out and solve it on paper</li>
+        <li>Fill it in digitally if you prefer</li>
+        <li>Share it with friends and family for fun</li>
+      </ul>
+      <p>Enjoy your puzzle and happy solving!</p>
+      <p>— The LoveGrids Team</p>
+    `,
+    filename: `crossword-${String(pid).slice(0,8)}.pdf`,
+    pdfBuffer
+  });
+  console.log(`📧 Sent PDF email for puzzle ${pid} to ${to}`);
+} catch (e) {
+  console.error(`❌ sendEmailWithAttachment failed for puzzle ${pid}:`, e);
+}
 
       sent.add(pid);
     }
