@@ -769,7 +769,7 @@ try {
     html: `
       <p>Hi there,</p>
       <p>Thank you for your purchase! 🎉</p>
-      <p>Your personalized crossword puzzle <strong>${String(pid).slice(0,8)}</strong> is attached as a PDF. It includes:</p>
+      <p>Your personalized crossword puzzle is attached as a PDF. It includes:</p>
       <ul>
         <li>The crossword grid</li>
         <li>All the clues you provided</li>
@@ -783,7 +783,7 @@ try {
       <p>Enjoy your puzzle and happy solving!</p>
       <p>— The LoveGrids Team</p>
     `,
-    filename: `crossword-${String(pid).slice(0,8)}.pdf`,
+    filename: `LoveFrames_crossword-${String(pid).slice(0,8)}.pdf`,
     pdfBuffer
   });
   console.log(`📧 Sent PDF email for puzzle ${pid} to ${to}`);
