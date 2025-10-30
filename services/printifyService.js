@@ -425,7 +425,7 @@ const backSrc = uploadedBack
     const nonFront = requiredPlaceholders.filter(n => n !== 'front' && n !== 'front_cover');
     const backKey = requiredPlaceholders.includes('back') ? 'back' : (nonFront[0] || 'back');
 
-    const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
+    const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 0.85);
     const bx = backPosition?.x ?? 0.5;
     const by = backPosition?.y ?? 0.5;
     const ba = backPosition?.angle ?? 0;
