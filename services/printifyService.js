@@ -268,8 +268,6 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId, variantI
 /* --------------------------
    Order creation (front/back)
 --------------------------- */
-
-// REPLACE YOUR ENTIRE createOrder(...) WITH THIS VERSION
 export async function createOrder({
   imageUrl,
   backImageUrl,
@@ -425,9 +423,14 @@ const backSrc = uploadedBack
     const nonFront = requiredPlaceholders.filter(n => n !== 'front' && n !== 'front_cover');
     const backKey = requiredPlaceholders.includes('back') ? 'back' : (nonFront[0] || 'back');
 
-    const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
-    const bx = backPosition?.x ?? 0.5;
-    const by = backPosition?.y ?? 0.5;
+   const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
+   const BACK_X_OFFSET   = Number(process.env.BACK_X_OFFSET || 0);   // e.g. 0.05 pushes 5% to the right
+   const BACK_Y_OFFSET   = Number(process.env.BACK_Y_OFFSET || 0);   // e.g. -0.03 nudges 3% up
+   const BACK_SCALE_BUMP = Number(process.env.BACK_SCALE_BUMP || 1); // e.g. 1.10 = +10% after contain
+
+ // base position from UI (0..1), then apply tiny offsets, clamp to 0..1
+   const bx = Math.max(0, Math.min(1, (backPosition?.x ?? 0.5) + BACK_X_OFFSET));
+   const by = Math.max(0, Math.min(1, (backPosition?.y ?? 0.5) + BACK_Y_OFFSET));
     const ba = backPosition?.angle ?? 0;
     const requestedBack =
       (typeof backPosition?.scale === 'number' ? backPosition.scale : (position?.scale ?? 1)) * BACK_SCALE_MULT;
@@ -442,7 +445,7 @@ const backSrc = uploadedBack
         Ih: uploadedBack?.height,
         requested: requestedBack,
       });
-      finalBackScale = Math.max(0, Math.min(1, finalBackScale)); // hard clamp
+      finalBackScale = Math.max(0, Math.min(1, finalBackScale * BACK_SCALE_BUMP));
       console.log('🧮 Back scale', { backKey, requestedBack, finalBackScale });
     } catch (e) {
       console.warn('⚠️ Contain-scale calc failed (back):', e.message);
