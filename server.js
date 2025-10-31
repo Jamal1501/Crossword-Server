@@ -1233,7 +1233,8 @@ app.get('/apps/crossword/placeholder-size', async (req, res) => {
 
 app.get('/api/printify/products', async (req, res) => {
   try {
-    const url = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json`;
+const qs  = new URLSearchParams(req.query).toString();
+const url = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json${qs ? `?${qs}` : ''}`;
     const products = await safeFetch(url, {
       headers: {
         Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
