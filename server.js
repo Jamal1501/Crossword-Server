@@ -1248,6 +1248,19 @@ app.get('/api/printify/products', async (req, res) => {
   }
 });
 
+// [ADD] List ALL published Printify products (read-only audit)
+app.get('/admin/printify/published-products', async (req, res) => {
+  try {
+    const { listPublishedProducts } = await import('./services/printifyService.js');
+    // implement listPublishedProducts to call Printify:
+    // GET /v1/shops/:shop_id/products.json?status=published&limit=100
+    const out = await listPublishedProducts({ status: 'published', limit: 100 });
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
 // GET a single Printify product (raw JSON, includes mockup image URLs when available)
 app.get('/api/printify/products/:productId', async (req, res) => {
   try {
