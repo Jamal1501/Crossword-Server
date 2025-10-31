@@ -1192,6 +1192,44 @@ const heroSrc = before?.images?.[0]?.src || null;
     res.status(500).json({ error: err.message });
   }
 });
+// [ADD] Return Printify placeholder box (width/height) for a variant and position
+// PAYLOAD:
+//   Request: GET /apps/crossword/placeholder-size?variantId=<number>&position=<string>
+//   Response: { width: number|null, height: number|null }
+app.get('/apps/crossword/placeholder-size', async (req, res) => {
+  try {
+    const { variantId, position = 'front' } = req.query;
+    if (!variantId) {
+      // do not hard fail — keep preview working even if client sent nothing
+      return res.json({ width: null, height: null });
+    }
+
+    // NOTE: These functions already exist in your Printify service.
+    const { resolveBpPpForVariant, getVariantPlaceholderByPos } = await import('./services/printifyService.js');
+
+    const meta = await resolveBpPpForVariant(parseInt(variantId, 10));
+    if (!meta?.blueprintId || !meta?.printProviderId) {
+      return res.json({ width: null, height: null });
+    }
+
+    const ph = await getVariantPlaceholderByPos(
+      meta.blueprintId,
+      meta.printProviderId,
+      parseInt(variantId, 10),
+      String(position || 'front')
+    );
+
+    if (ph && Number(ph.width) > 0 && Number(ph.height) > 0) {
+      return res.json({ width: Number(ph.width), height: Number(ph.height) });
+    }
+
+    return res.json({ width: null, height: null });
+  } catch (e) {
+    console.warn('[placeholder-size] failed:', e?.message);
+    // SOFT FAIL — never 500; client will fallback to old preview logic
+    res.json({ width: null, height: null });
+  }
+});
 
 app.get('/api/printify/products', async (req, res) => {
   try {
