@@ -452,7 +452,7 @@ const backSrc = uploadedBack
       position: backKey,
       images: [{
         id: uploadedBack?.id || undefined,
-        src: frontSrc,
+        src: backSrc,
         name: uploadedBack?.file_name || 'back.png',
         type: 'image/png',
         height: uploadedBack?.height || 0,
