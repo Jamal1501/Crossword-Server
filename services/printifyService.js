@@ -15,6 +15,31 @@ const EXCLUDE_TITLE_RE = new RegExp(
   'i'
 );
 
+if (!PRINTIFY_API_KEY || !PRINTIFY_SHOP_ID) {
+  throw new Error('Missing PRINTIFY_API_KEY or PRINTIFY_SHOP_ID env vars');
+}
+
+function authHeaders(extra = {}) {
+  return {
+    Authorization: `Bearer ${PRINTIFY_API_KEY}`,
+    'Content-Type': 'application/json',
+    'User-Agent': 'Crossword-Automation/1.2',
+    ...extra,
+  };
+}
+
+export async function safeFetch(url, options = {}) {
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`${options.method || 'GET'} ${url} → ${res.status}\n${txt}`);
+  }
+  return res.status === 204 ? null : await res.json();
+}
+
+/* --------------------------
+   Shop product listing (filtered)
+--------------------------- */
 async function fetchAllProductsPagedFiltered() {
   const all = [];
   let page = 1;
@@ -62,18 +87,10 @@ async function providerHasVariant(bp, pp, variantId) {
   }
 }
 
-export async function getVariantPlaceholderByPos(blueprintId, printProviderId, variantId, pos = 'front') {
-  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
-  const data = await safeFetch(url, { headers: authHeaders() });
-  const v = data?.variants?.find(v => v.id === parseInt(variantId));
-  const ph = v?.placeholders?.find(p => p.position === pos);
-  return ph ? { width: ph.width, height: ph.height } : null;
-}
 /**
  * Resolve a valid (blueprint_id, print_provider_id) for a given catalog variant id.
  * 1) Try the filtered shop product that actually contains this variant.
- * 2) If that product is junk (bp invalid or provider doesn’t offer the variant), scan other
- *    (bp,pp) combos from your filtered products and pick the first that truly offers it.
+ * 2) If that product is junk, scan other (bp,pp) combos from filtered products and pick the first that offers it.
  */
 export async function resolveBpPpForVariant(variantId) {
   const products = await fetchAllProductsPagedFiltered();
@@ -105,33 +122,53 @@ export async function resolveBpPpForVariant(variantId) {
   throw new Error(`Unable to resolve a valid blueprint/provider for variant ${variantId} (checked ${products.length} products)`);
 }
 
-
-if (!PRINTIFY_API_KEY || !PRINTIFY_SHOP_ID) {
-  throw new Error('Missing PRINTIFY_API_KEY or PRINTIFY_SHOP_ID env vars');
+/* --------------------------
+   Placeholder helpers (catalog)
+--------------------------- */
+export async function getVariantPlaceholderByPos(blueprintId, printProviderId, variantId, pos = 'front') {
+  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
+  const data = await safeFetch(url, { headers: authHeaders() });
+  const v = data?.variants?.find(v => v.id === parseInt(variantId));
+  const ph = v?.placeholders?.find(p => p.position === pos);
+  return ph ? { width: ph.width, height: ph.height } : null;
 }
 
-function authHeaders(extra = {}) {
-  return {
-    Authorization: `Bearer ${PRINTIFY_API_KEY}`,
-    'Content-Type': 'application/json',
-    'User-Agent': 'Crossword-Automation/1.2',
-    ...extra,
-  };
+async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
+  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
+  const data = await safeFetch(url, { headers: authHeaders() });
+  const v = data?.variants?.find(v => v.id === parseInt(variantId));
+  const ph = v?.placeholders?.find(p => p.position === 'front');
+  return ph ? { width: ph.width, height: ph.height } : null;
 }
 
-export async function safeFetch(url, options = {}) {
-  const res = await fetch(url, options);
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(`${options.method || 'GET'} ${url} → ${res.status}\n${txt}`);
+async function getVariantPlaceholderNames(blueprintId, printProviderId, variantId) {
+  try {
+    const data = await safeFetch(
+      `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`,
+      { headers: authHeaders() }
+    );
+    const v = data?.variants?.find(v => v.id === parseInt(variantId));
+    return (v?.placeholders || []).map(p => p.position).filter(Boolean);
+  } catch {
+    return ['front']; // fallback
   }
-  return res.status === 204 ? null : await res.json();
+}
+
+/* --------------------------
+   Contain scale helper
+--------------------------- */
+// Allow enlarging to fully contain within the placeholder box
+// (Printify expects 0..1; clamp the final!)
+function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
+  if (!Aw || !Ah || !Iw || !Ih) return Math.max(0, Math.min(1, requested ?? 1));
+  const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih)); // fraction of area width for contain
+  const out  = (requested ?? 1) * sMax;
+  return Math.max(0, Math.min(1, out));
 }
 
 /* --------------------------
    Small helper lookups
 --------------------------- */
-
 export async function getShopId() {
   const data = await safeFetch(`${BASE_URL}/shops.json`, { headers: authHeaders() });
   const shops = Array.isArray(data) ? data : (data?.data || []);
@@ -170,29 +207,9 @@ export async function listVariants(blueprintId, printProviderId) {
   return Array.isArray(data?.variants) ? data.variants : (data?.data || []);
 }
 
-async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
-  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
-  const data = await safeFetch(url, { headers: authHeaders() });
-  const v = data?.variants?.find(v => v.id === parseInt(variantId));
-  const ph = v?.placeholders?.find(p => p.position === 'front');
-  return ph ? { width: ph.width, height: ph.height } : null;
-}
-
-// Allow enlarging to fully contain within the placeholder box
-// (Printify expects 0..1; clamp the final!)
-function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
-  if (!Aw || !Ah || !Iw || !Ih) return Math.max(0, Math.min(1, requested ?? 1));
-  const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih)); // fraction of area width for contain
-  const out  = (requested ?? 1) * sMax;
-  return Math.max(0, Math.min(1, out));
-}
-
-
-
 /* --------------------------
    Upload helpers
 --------------------------- */
-
 export async function uploadImageFromUrl(imageUrl) {
   if (!imageUrl || typeof imageUrl !== 'string') {
     throw new Error('Invalid imageUrl input');
@@ -248,398 +265,16 @@ export async function uploadImageFromBase64(base64Image) {
 }
 
 /* --------------------------
-   Optional sample creator
+   Product preview updaters (unchanged)
 --------------------------- */
-
-
-async function getVariantPlaceholderNames(blueprintId, printProviderId, variantId) {
-  try {
-    const data = await safeFetch(
-      `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`,
-      { headers: authHeaders() }
-    );
-    const v = data?.variants?.find(v => v.id === parseInt(variantId));
-    return (v?.placeholders || []).map(p => p.position).filter(Boolean);
-  } catch {
-    return ['front']; // fallback
-  }
+function normalizePlaceholders(placeholders) {
+  const list = Array.isArray(placeholders) ? placeholders : [];
+  return list.map(p => ({
+    position: p?.position || 'front',
+    images: Array.isArray(p?.images) ? p.images : []
+  }));
 }
 
-/* --------------------------
-   Order creation (front/back)
---------------------------- */
-export async function createOrder({
-  imageUrl,
-  backImageUrl,
-  base64Image,
-  variantId,
-  quantity = 1,
-  position,
-  backPosition,
-  recipient,
-  printArea, // not used, but accepted
-  meta       // not used, but accepted
-}) {
-  if ((!imageUrl && !base64Image) || !variantId || !recipient) {
-    console.error('❌ Missing required fields:', { imageUrl, base64Image, variantId, recipient });
-    throw new Error('Missing required fields: imageUrl/base64Image, variantId, recipient');
-  }
-
-  // 1) Upload FRONT
-  console.log('📤 Uploading FRONT image to Printify:', imageUrl || '[base64Image]');
-  let uploadedFront;
-  try {
-    uploadedFront = imageUrl
-      ? await uploadImageFromUrl(imageUrl)
-      : await uploadImageFromBase64(base64Image);
-    console.log('✅ Front image uploaded to Printify:', uploadedFront);
-  } catch (uploadErr) {
-    console.error('❌ Failed to upload FRONT image to Printify:', uploadErr.message);
-    throw uploadErr;
-  }
-
-  // 2) If provided, upload BACK (clues)
-  let uploadedBack = null;
-  if (backImageUrl) {
-    try {
-      console.log('📤 Uploading BACK image to Printify:', backImageUrl);
-      uploadedBack = await uploadImageFromUrl(backImageUrl);
-      console.log('✅ Back image uploaded to Printify:', uploadedBack);
-    } catch (e) {
-      console.warn('⚠️ Back image upload failed; continuing without back:', e.message);
-    }
-  }
-
-  // 3) Resolve product / provider / blueprint for this variant
-  console.log('🔍 Resolving (blueprint, provider) for variant via paged + filtered products…');
-  let product, printProviderId, blueprintId;
-  try {
-    const { product: matchedProduct, blueprintId: bp, printProviderId: pp } =
-      await resolveBpPpForVariant(variantId);
-
-    product = matchedProduct;
-    blueprintId = bp;
-    printProviderId = pp;
-
-    console.log(`✅ Matched variant ${variantId} to product:`, {
-      title: product?.title,
-      blueprintId,
-      printProviderId
-    });
-  } catch (e) {
-    console.error('❌ Unable to resolve (bp,pp) for variant', variantId, e.message);
-    throw e;
-  }
-
-  // 4) Contain-fit scale for FRONT (avoid clipping)
-  const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
-  let requestedFrontScale = (position?.scale ?? 1) * FRONT_SCALE_MULT;
-  let finalScale = requestedFrontScale;
-  try {
-    const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
-    finalScale = clampContainScale({
-      Aw: ph?.width, Ah: ph?.height,
-      Iw: uploadedFront?.width, Ih: uploadedFront?.height,
-      requested: requestedFrontScale
-    });
-    finalScale = Math.max(0, Math.min(1, finalScale)); // hard clamp
-    console.log('🧮 Scale containment (front)', {
-      Aw: ph?.width, Ah: ph?.height,
-      Iw: uploadedFront?.width, Ih: uploadedFront?.height,
-      requested: requestedFrontScale,
-      finalScale
-    });
-  } catch (e) {
-    console.warn('⚠️ Contain-scale calc failed (front):', e.message);
-  }
-
-  // 5) Get required placeholder names
-  let requiredPlaceholders = ['front'];
-  try {
-    requiredPlaceholders = await getVariantPlaceholderNames(blueprintId, printProviderId, parseInt(variantId));
-    if (!Array.isArray(requiredPlaceholders) || requiredPlaceholders.length === 0) {
-      requiredPlaceholders = ['front'];
-    }
-  } catch {
-    requiredPlaceholders = ['front'];
-  }
-
-// 6) Extract image URLs
-const frontSrc =
-  uploadedFront?.preview_url ||
-  uploadedFront?.file_url ||
-  uploadedFront?.url ||
-  imageUrl; // final fallback to original url
-
-const backSrc = uploadedBack
-  ? (uploadedBack?.preview_url ||
-     uploadedBack?.file_url ||
-     uploadedBack?.url ||
-     backImageUrl)
-  : null;
-
-
-  // 7) Build placeholders array
-  const placeholdersArr = [];
-
-  // FRONT placeholder
-  placeholdersArr.push({
-    position: 'front',
-    images: [{
-      id: uploadedFront?.id || undefined,
-      src: frontSrc,
-      name: uploadedFront?.file_name || 'front.png',
-      type: 'image/png',
-      height: uploadedFront?.height || 0,
-      width: uploadedFront?.width || 0,
-      x: position?.x ?? 0.5,
-      y: position?.y ?? 0.5,
-      scale: finalScale,
-      angle: position?.angle ?? 0
-    }]
-  });
-
-  // FRONT_COVER (if required)
-  if (requiredPlaceholders.includes('front_cover')) {
-    placeholdersArr.push({
-      position: 'front_cover',
-      images: [{
-        id: uploadedFront?.id || undefined,
-        src: frontSrc,
-        name: uploadedFront?.file_name || 'front.png',
-        type: 'image/png',
-        height: uploadedFront?.height || 0,
-        width: uploadedFront?.width || 0,
-        x: position?.x ?? 0.5,
-        y: position?.y ?? 0.5,
-        scale: finalScale,
-        angle: position?.angle ?? 0
-      }]
-    });
-  }
-
-  // BACK placeholder (if back image uploaded)
-  if (uploadedBack) {
-    const nonFront = requiredPlaceholders.filter(n => n !== 'front' && n !== 'front_cover');
-    const backKey = requiredPlaceholders.includes('back') ? 'back' : (nonFront[0] || 'back');
-
-   const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
-   const BACK_X_OFFSET   = Number(process.env.BACK_X_OFFSET || 0);   // e.g. 0.05 pushes 5% to the right
-   const BACK_Y_OFFSET   = Number(process.env.BACK_Y_OFFSET || 0);   // e.g. -0.03 nudges 3% up
-   const BACK_SCALE_BUMP = Number(process.env.BACK_SCALE_BUMP || 1); // e.g. 1.10 = +10% after contain
-
- // base position from UI (0..1), then apply tiny offsets, clamp to 0..1
-   const bx = Math.max(0, Math.min(1, (backPosition?.x ?? 0.5) + BACK_X_OFFSET));
-   const by = Math.max(0, Math.min(1, (backPosition?.y ?? 0.5) + BACK_Y_OFFSET));
-    const ba = backPosition?.angle ?? 0;
-    const requestedBack =
-      (typeof backPosition?.scale === 'number' ? backPosition.scale : (position?.scale ?? 1)) * BACK_SCALE_MULT;
-
-    let finalBackScale = requestedBack;
-    try {
-      const ph = await getVariantPlaceholderByPos(blueprintId, printProviderId, parseInt(variantId), backKey);
-      finalBackScale = clampContainScale({
-        Aw: ph?.width,
-        Ah: ph?.height,
-        Iw: uploadedBack?.width,
-        Ih: uploadedBack?.height,
-        requested: requestedBack,
-      });
-      finalBackScale = Math.max(0, Math.min(1, finalBackScale * BACK_SCALE_BUMP));
-      console.log('🧮 Back scale', { backKey, requestedBack, finalBackScale });
-    } catch (e) {
-      console.warn('⚠️ Contain-scale calc failed (back):', e.message);
-    }
-
-    placeholdersArr.push({
-      position: backKey,
-      images: [{
-        id: uploadedBack?.id || undefined,
-        src: backSrc,
-        name: uploadedBack?.file_name || 'back.png',
-        type: 'image/png',
-        height: uploadedBack?.height || 0,
-        width: uploadedBack?.width || 0,
-        x: bx,
-        y: by,
-        scale: finalBackScale,
-        angle: ba
-      }]
-    });
-  }
-
- const printAreas = Object.fromEntries(
-   placeholdersArr
-    .map(p => [
-       p.position,
-       (p.images || []).filter(img => img && (img.id || img.url || img.src)) // include src
-     ])
-     .filter(([_, imgs]) => imgs.length > 0)
- );
-
-  
-const payload = {
-  external_id: `order-${Date.now()}`,
-  label: 'Crossword Custom Order',
-  line_items: [{
-    variant_id: parseInt(variantId),
-    quantity: Math.max(1, Number(quantity) || 1),
-    print_provider_id: printProviderId,
-    blueprint_id: blueprintId,
-    print_areas: printAreas
-  }],
-  shipping_method: 1,
-  send_shipping_notification: true,
-  address_to: {
-    first_name: recipient.name?.split(' ')[0] || '-',
-    last_name: recipient.name?.split(' ').slice(1).join(' ') || '-',
-    email: recipient.email,
-    address1: recipient.address1,
-    city: recipient.city,
-    country: recipient.country,
-    zip: recipient.zip,
-    phone: recipient.phone || ''
-  }
-};
-
-  console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
-
-  // 9) Create the order at Printify and return response
-  const orderUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
-  const orderResp = await safeFetch(orderUrl, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify(payload)
-  });
-  return orderResp;
-}
-
-// --- BATCH ORDER CREATION (additive) -----------------------------------------
-export async function createOrderBatch({
-  items = [],          // array of { imageUrl, backImageUrl?, variantId, quantity, position, backPosition }
-  recipient,           // same shape as in createOrder
-  externalId,          // optional
-  label = 'Crossword Custom Order',
-  shipping_method = 1, // 1 = standard
-  send_shipping_notification = true
-}) {
-  if (!Array.isArray(items) || items.length === 0) {
-    throw new Error('createOrderBatch: items[] is required and cannot be empty');
-  }
-  if (!recipient) {
-    throw new Error('createOrderBatch: recipient is required');
-  }
-
-  // Build each line_item exactly like createOrder does, but per item
-  const line_items = [];
-  let commonPrintProviderId = null;
-  let commonBlueprintId = null;
-
-  for (const it of items) {
-    const { imageUrl, backImageUrl, variantId, quantity = 1, position, backPosition } = it;
-    if ((!imageUrl && !it.base64Image) || !variantId) {
-      throw new Error('createOrderBatch: each item needs imageUrl/base64Image and variantId');
-    }
-
-    // Resolve bp/pp for this variant
-    const { blueprintId, printProviderId } = await resolveBpPpForVariant(variantId);
-
-    // Optional sanity: ensure all items share provider (to keep one shipment).
-    // If they don’t, Printify may split shipments. We simply allow it, but you can enforce.
-    commonPrintProviderId ??= printProviderId;
-    commonBlueprintId ??= blueprintId;
-
-    // Upload images (front + optional back)
-    const uploadedFront = imageUrl
-      ? await uploadImageFromUrl(imageUrl)
-      : await uploadImageFromBase64(it.base64Image);
-
-    let uploadedBack = null;
-    if (backImageUrl) {
-      uploadedBack = await uploadImageFromUrl(backImageUrl);
-    }
-
-    // Prepare positions and scales (mirrors createOrder)
-    const px = (v, d=0) => (typeof v === 'number' && isFinite(v) ? v : d);
-    const x  = px(position?.x, 0.5);
-    const y  = px(position?.y, 0.5);
-    const s  = Math.max(0, Math.min(1, px(position?.scale, 1)));
-    const a  = px(position?.angle, 0);
-
-    let linePrintAreas = {
-      front: [{
-        id: uploadedFront?.id || undefined,
-        src: uploadedFront?.file_url || uploadedFront?.url || imageUrl,
-        name: uploadedFront?.file_name || 'front.png',
-        type: 'image/png',
-        height: uploadedFront?.height || 0,
-        width:  uploadedFront?.width  || 0,
-        x, y, scale: s, angle: a
-      }]
-    };
-
-    if (uploadedBack || backImageUrl) {
-      const bx = px(backPosition?.x, 0.5);
-      const by = px(backPosition?.y, 0.5);
-      const bs = Math.max(0, Math.min(1, px(backPosition?.scale, 1)));
-      const ba = px(backPosition?.angle, 0);
-
-      linePrintAreas.back = [{
-        id: uploadedBack?.id || undefined,
-        src: uploadedBack?.file_url || uploadedBack?.url || backImageUrl,
-        name: uploadedBack?.file_name || 'back.png',
-        type: 'image/png',
-        height: uploadedBack?.height || 0,
-        width:  uploadedBack?.width  || 0,
-        x: bx, y: by, scale: bs, angle: ba
-      }];
-    }
-
-    // Printify expects { position: [...images] } → already structured above.
-    // Build the line_item
-    line_items.push({
-      variant_id: parseInt(variantId),
-      quantity: Math.max(1, Number(quantity) || 1),
-      print_provider_id: printProviderId,
-      blueprint_id: blueprintId,
-      print_areas: linePrintAreas
-    });
-  }
-
-  const payload = {
-    external_id: externalId || `batch-${Date.now()}`,
-    label,
-    line_items,
-    shipping_method,
-    send_shipping_notification,
-    address_to: {
-      first_name: recipient.name?.split(' ')[0] || '-',
-      last_name:  recipient.name?.split(' ').slice(1).join(' ') || '-',
-      email:      (recipient.email || '').trim() || undefined,
-      phone:      (recipient.phone || '').trim() || undefined,
-      country:    recipient.country || '',
-      region:     recipient.region || '',
-      address1:   recipient.address1 || '',
-      address2:   recipient.address2 || '',
-      city:       recipient.city || '',
-      zip:        recipient.zip || ''
-    }
-  };
-
-  console.log('📦 Final Printify BATCH payload:', JSON.stringify(payload, null, 2));
-
-  const orderUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
-  const orderResp = await safeFetch(orderUrl, {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify(payload)
-  });
-
-  return orderResp;
-}
-
-
-/* Ensure an area object always has a placeholders array */
 function withPlaceholders(area) {
   return {
     ...area,
@@ -647,7 +282,6 @@ function withPlaceholders(area) {
   };
 }
 
-/* Ensure the whole print_areas array is valid; if missing, create one */
 function normalizeAreas(print_areas, allVariantIds = []) {
   const arr = Array.isArray(print_areas) ? print_areas : [];
   if (!arr.length) {
@@ -659,32 +293,12 @@ function normalizeAreas(print_areas, allVariantIds = []) {
   return arr.map(withPlaceholders);
 }
 
-
-/* Ensure every placeholder has an images array */
-function normalizePlaceholders(placeholders) {
-  const list = Array.isArray(placeholders) ? placeholders : [];
-  return list.map(p => ({
-    position: p?.position || 'front',
-    images: Array.isArray(p?.images) ? p.images : []
-  }));
-}
-
-
-/* -------------------------- tiny util --------------------------- */
-/**
- * Replace or insert a placeholder by position while preserving others.
- * @param {Array<{position:string, images:Array}>} placeholders
- * @param {string} position  e.g. "front" | "back" | "front_cover"
- * @param {Array<Object>} images  array of image objects for this position
- * @returns {Array} new placeholders array
- */
 function upsertPlaceholder(placeholders, position, images) {
   const list = Array.isArray(placeholders) ? placeholders : [];
   const rest = list.filter(p => p && p.position !== position);
   return normalizePlaceholders([...rest, { position, images }]);
 }
 
-/* -------------------------- Product preview updaters --------------------------- */
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
@@ -757,7 +371,6 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     body: JSON.stringify(payload)
   });
 }
-
 
 export async function applyImagesToProductDual(
   productId,
@@ -864,7 +477,6 @@ export async function applyImagesToProductDual(
   });
 }
 
-
 export async function fetchProduct(productId) {
   if (!productId) {
     throw new Error("Missing productId");
@@ -874,4 +486,265 @@ export async function fetchProduct(productId) {
     method: 'GET',
     headers: authHeaders(),
   });
+}
+
+/* --------------------------
+   Order creation (front/back) — FIXED to use files[]
+--------------------------- */
+export async function createOrder({
+  imageUrl,
+  backImageUrl,
+  base64Image,
+  variantId,
+  quantity = 1,
+  position,
+  backPosition,
+  recipient,
+  printArea, // not used, but accepted
+  meta       // not used, but accepted
+}) {
+  if ((!imageUrl && !base64Image) || !variantId || !recipient) {
+    console.error('❌ Missing required fields:', { imageUrl, base64Image, variantId, recipient });
+    throw new Error('Missing required fields: imageUrl/base64Image, variantId, recipient');
+  }
+
+  // 1) Upload FRONT
+  console.log('📤 Uploading FRONT image to Printify:', imageUrl || '[base64Image]');
+  let uploadedFront;
+  try {
+    uploadedFront = imageUrl
+      ? await uploadImageFromUrl(imageUrl)
+      : await uploadImageFromBase64(base64Image);
+    console.log('✅ Front image uploaded to Printify:', uploadedFront);
+  } catch (uploadErr) {
+    console.error('❌ Failed to upload FRONT image to Printify:', uploadErr.message);
+    throw uploadErr;
+  }
+
+  // 2) If provided, upload BACK (clues)
+  let uploadedBack = null;
+  if (backImageUrl) {
+    try {
+      console.log('📤 Uploading BACK image to Printify:', backImageUrl);
+      uploadedBack = await uploadImageFromUrl(backImageUrl);
+      console.log('✅ Back image uploaded to Printify:', uploadedBack);
+    } catch (e) {
+      console.warn('⚠️ Back image upload failed; continuing without back:', e.message);
+    }
+  }
+
+  // 3) Resolve product / provider / blueprint for this variant
+  console.log('🔍 Resolving (blueprint, provider) for variant via paged + filtered products…');
+  let product, printProviderId, blueprintId;
+  try {
+    const { product: matchedProduct, blueprintId: bp, printProviderId: pp } =
+      await resolveBpPpForVariant(variantId);
+
+    product = matchedProduct;
+    blueprintId = bp;
+    printProviderId = pp;
+
+    console.log(`✅ Matched variant ${variantId} to product:`, {
+      title: product?.title,
+      blueprintId,
+      printProviderId
+    });
+  } catch (e) {
+    console.error('❌ Unable to resolve (bp,pp) for variant', variantId, e.message);
+    throw e;
+  }
+
+  // 4) Contain-fit scale for FRONT (avoid clipping)
+  const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
+  let requestedFrontScale = (position?.scale ?? 1) * FRONT_SCALE_MULT;
+  let finalScale = requestedFrontScale;
+  try {
+    const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
+    finalScale = clampContainScale({
+      Aw: ph?.width, Ah: ph?.height,
+      Iw: uploadedFront?.width, Ih: uploadedFront?.height,
+      requested: requestedFrontScale
+    });
+    finalScale = Math.max(0, Math.min(1, finalScale)); // hard clamp
+    console.log('🧮 Scale containment (front)', {
+      Aw: ph?.width, Ah: ph?.height,
+      Iw: uploadedFront?.width, Ih: uploadedFront?.height,
+      requested: requestedFrontScale,
+      finalScale
+    });
+  } catch (e) {
+    console.warn('⚠️ Contain-scale calc failed (front):', e.message);
+  }
+
+  // 5) Decide positions
+  const px = (v, d=0) => (typeof v === 'number' && isFinite(v) ? v : d);
+  const fX = px(position?.x, 0.5);
+  const fY = px(position?.y, 0.5);
+  const fA = px(position?.angle, 0);
+
+  // 6) Build files array (Orders API expects files[], not print_areas)
+  const files = [{
+    placement: 'front',
+    ...(uploadedFront?.id ? { image_id: uploadedFront.id } : { image_url: imageUrl }),
+    position: { x: fX, y: fY, scale: finalScale, angle: fA }
+  }];
+
+  if (uploadedBack || backImageUrl) {
+    const bX = px(backPosition?.x, 0.5);
+    const bY = px(backPosition?.y, 0.5);
+    const bA = px(backPosition?.angle, 0);
+    const bS = Math.max(0, Math.min(1, px(backPosition?.scale, position?.scale ?? 1)));
+    files.push({
+      placement: 'back',
+      ...(uploadedBack?.id ? { image_id: uploadedBack.id } : { image_url: backImageUrl }),
+      position: { x: bX, y: bY, scale: bS, angle: bA }
+    });
+  }
+
+  // 7) Compose order payload
+  const payload = {
+    external_id: `order-${Date.now()}`,
+    label: 'Crossword Custom Order',
+    line_items: [{
+      variant_id: parseInt(variantId),
+      quantity: Math.max(1, Number(quantity) || 1),
+      print_provider_id: Number(printProviderId),
+      blueprint_id: Number(blueprintId),
+      files
+    }],
+    shipping_method: 1,
+    send_shipping_notification: true,
+    address_to: {
+      first_name: (recipient.name || '').split(' ')[0] || '-',
+      last_name: (recipient.name || '').split(' ').slice(1).join(' ') || '-',
+      email: (recipient.email || '').trim() || undefined,
+      phone: (recipient.phone || '').trim() || undefined,
+      country: recipient.country || '',
+      region: recipient.region || '',
+      address1: recipient.address1 || '',
+      address2: recipient.address2 || '',
+      city: recipient.city || '',
+      zip: recipient.zip || ''
+    }
+  };
+
+  console.log('📦 Final Printify order payload:', JSON.stringify(payload, null, 2));
+
+  // 8) Create the order at Printify and return response
+  const orderUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
+  const orderResp = await safeFetch(orderUrl, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+  return orderResp;
+}
+
+/* --------------------------
+   BATCH ORDER CREATION — FIXED to use files[]
+--------------------------- */
+export async function createOrderBatch({
+  items = [],          // array of { imageUrl, backImageUrl?, base64Image?, variantId, quantity, position, backPosition }
+  recipient,           // same shape as in createOrder
+  externalId,          // optional
+  label = 'Crossword Custom Order',
+  shipping_method = 1, // 1 = standard
+  send_shipping_notification = true
+}) {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('createOrderBatch: items[] is required and cannot be empty');
+  }
+  if (!recipient) {
+    throw new Error('createOrderBatch: recipient is required');
+  }
+
+  const line_items = [];
+  let commonPrintProviderId = null;
+  let commonBlueprintId = null;
+
+  for (const it of items) {
+    const { imageUrl, backImageUrl, base64Image, variantId, quantity = 1, position, backPosition } = it;
+    if ((!imageUrl && !base64Image) || !variantId) {
+      throw new Error('createOrderBatch: each item needs imageUrl/base64Image and variantId');
+    }
+
+    // Resolve bp/pp for this variant
+    const { blueprintId, printProviderId } = await resolveBpPpForVariant(variantId);
+    commonPrintProviderId ??= printProviderId;
+    commonBlueprintId ??= blueprintId;
+
+    // Upload images (front + optional back)
+    const uploadedFront = imageUrl
+      ? await uploadImageFromUrl(imageUrl)
+      : await uploadImageFromBase64(base64Image);
+
+    let uploadedBack = null;
+    if (backImageUrl) {
+      uploadedBack = await uploadImageFromUrl(backImageUrl);
+    }
+
+    // Positions & scales
+    const px = (v, d=0) => (typeof v === 'number' && isFinite(v) ? v : d);
+    const fX = px(position?.x, 0.5);
+    const fY = px(position?.y, 0.5);
+    const fA = px(position?.angle, 0);
+    const fS = Math.max(0, Math.min(1, px(position?.scale, 1)));
+
+    const files = [{
+      placement: 'front',
+      ...(uploadedFront?.id ? { image_id: uploadedFront.id } : { image_url: imageUrl }),
+      position: { x: fX, y: fY, scale: fS, angle: fA }
+    }];
+
+    if (uploadedBack || backImageUrl) {
+      const bX = px(backPosition?.x, 0.5);
+      const bY = px(backPosition?.y, 0.5);
+      const bA = px(backPosition?.angle, 0);
+      const bS = Math.max(0, Math.min(1, px(backPosition?.scale, 1)));
+      files.push({
+        placement: 'back',
+        ...(uploadedBack?.id ? { image_id: uploadedBack.id } : { image_url: backImageUrl }),
+        position: { x: bX, y: bY, scale: bS, angle: bA }
+      });
+    }
+
+    line_items.push({
+      variant_id: parseInt(variantId),
+      quantity: Math.max(1, Number(quantity) || 1),
+      print_provider_id: Number(printProviderId),
+      blueprint_id: Number(blueprintId),
+      files
+    });
+  }
+
+  const payload = {
+    external_id: externalId || `batch-${Date.now()}`,
+    label,
+    line_items,
+    shipping_method,
+    send_shipping_notification,
+    address_to: {
+      first_name: (recipient.name || '').split(' ')[0] || '-',
+      last_name:  (recipient.name || '').split(' ').slice(1).join(' ') || '-',
+      email:      (recipient.email || '').trim() || undefined,
+      phone:      (recipient.phone || '').trim() || undefined,
+      country:    recipient.country || '',
+      region:     recipient.region || '',
+      address1:   recipient.address1 || '',
+      address2:   recipient.address2 || '',
+      city:       recipient.city || '',
+      zip:        recipient.zip || ''
+    }
+  };
+
+  console.log('📦 Final Printify BATCH payload:', JSON.stringify(payload, null, 2));
+
+  const orderUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
+  const orderResp = await safeFetch(orderUrl, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+
+  return orderResp;
 }
