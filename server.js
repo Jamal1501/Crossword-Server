@@ -47,6 +47,7 @@ const corsOptions = {
 };
 
 const { createOrder } = printifyService;
+const { createOrderBatch } = printifyService;
 const app = express();
 
 // --- CORS & parsers (run BEFORE routes) ---
@@ -426,6 +427,9 @@ function verifyAppProxy(req) {
   return digest === sig;
 }
 
+// ------------------------------------------------------------------
+// BATCH ORDER FIX: One Printify order per Shopify order
+// ------------------------------------------------------------------
 async function handlePrintifyOrder(order) {
   // Flatten useful fields from Shopify line items
   const items = order.line_items.map((li) => {
@@ -452,6 +456,24 @@ async function handlePrintifyOrder(order) {
       design_specs
     };
   });
+
+  // BATCH mode: one Printify order with multiple line_items.
+  const BATCH_MODE = true; // keep simple and safe; switch to env flag later if you want
+  const batchItems = [];
+
+  // Build one recipient from the order shipping address
+  const _ship = order?.shipping_address || {};
+  const orderRecipient = {
+    name: [_ship.first_name, _ship.last_name].filter(Boolean).join(' ') || _ship.name || 'Customer',
+    email: (order?.email || order?.customer?.email || '').trim() || undefined,
+    phone: (_ship.phone || order?.phone || '').trim() || undefined,
+    address1: _ship.address1 || '',
+    address2: _ship.address2 || '',
+    city: _ship.city || '',
+    region: _ship.province || _ship.province_code || '',
+    country: _ship.country_code || _ship.country || '',
+    zip: _ship.zip || ''
+  };
 
   for (const item of items) {
     if (!item.custom_image || !item.variant_id) {
@@ -485,90 +507,106 @@ async function handlePrintifyOrder(order) {
       }
     }
 
-// --- use live placeholder for this Printify variant (front) ---
-let phFront = null;
-try {
-  const { blueprintId, printProviderId } = await resolveBpPpForVariant(printifyVariantId);
-  phFront = await getVariantPlaceholderByPos(
-    blueprintId, printProviderId, Number(printifyVariantId), 'front'
-  );
-} catch { /* keep null fallback */ }
+    // --- use live placeholder for this Printify variant (front) ---
+    let phFront = null;
+    try {
+      const { blueprintId, printProviderId } = await resolveBpPpForVariant(printifyVariantId);
+      phFront = await getVariantPlaceholderByPos(
+        blueprintId, printProviderId, Number(printifyVariantId), 'front'
+      );
+    } catch { /* keep null fallback */ }
 
-// --- derive scale from design_specs.size relative to real area width ---
-let scale = 1.0;
-const sizeVal = item.design_specs?.size;
-if (typeof sizeVal === 'string') {
-  const s = sizeVal.trim();
-  if (s.endsWith('%')) {
-    const pct = parseFloat(s);
-    if (!Number.isNaN(pct)) scale = Math.max(0.1, Math.min(2, pct / 100));
-  } else if (s.endsWith('px') && phFront?.width) {
-    const px = parseFloat(s);
-    if (!Number.isNaN(px)) scale = Math.max(0.1, Math.min(2, px / phFront.width));
+    // --- derive scale from design_specs.size relative to real area width ---
+    let scale = 1.0;
+    const sizeVal = item.design_specs?.size;
+    if (typeof sizeVal === 'string') {
+      const s = sizeVal.trim();
+      if (s.endsWith('%')) {
+        const pct = parseFloat(s);
+        if (!Number.isNaN(pct)) scale = Math.max(0.1, Math.min(2, pct / 100));
+      } else if (s.endsWith('px') && phFront?.width) {
+        const px = parseFloat(s);
+        if (!Number.isNaN(px)) scale = Math.max(0.1, Math.min(2, px / phFront.width));
+      }
+    }
+
+    // --- normalize x/y using real area dims ---
+    const topPx  = parseFloat(item.design_specs?.top  || '0');
+    const leftPx = parseFloat(item.design_specs?.left || '0');
+    let x = 0.5, y = 0.5;
+
+    if (phFront?.width && phFront?.height) {
+      const imgW = phFront.width  * scale;
+      const imgH = phFront.height * scale;
+      x = Math.min(1, Math.max(0, (leftPx + imgW / 2) / phFront.width));
+      y = Math.min(1, Math.max(0, (topPx  + imgH / 2) / phFront.height));
+    }
+
+    const position = { x, y, scale, angle: 0 };
+
+    // --- back placement: keep multiplier approach (clamped) ---
+    const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
+    const backScale = Math.max(0.1, Math.min(2, scale * BACK_SCALE_MULT));
+    const backPosition = { x: 0.5, y: 0.5, scale: backScale, angle: 0 };
+
+    // --- make sure 'area' exists before you pass it below ---
+    const area = printAreas?.[shopifyVid] || null;
+
+    // --- finally, call createOrder (legacy) OR collect for batch ---
+    const backImageUrl =
+      item.clue_output_mode === 'back' && item.clues_image_url ? item.clues_image_url : undefined;
+
+    if (!BATCH_MODE) {
+      // Legacy per-item order (unchanged)
+      const recipient = orderRecipient; // same data, but per-item is fine
+      try {
+        const response = await createOrder({
+          imageUrl: item.custom_image,
+          backImageUrl,
+          variantId: printifyVariantId,
+          quantity: item.quantity,
+          position,
+          backPosition,
+          recipient,
+          printArea: area || undefined,
+          meta: { shopifyVid, title: item.title }
+        });
+
+        console.log('✅ Printify order created:', response?.id || '[no id]', { shopifyVid, printifyVariantId, scale });
+      } catch (err) {
+        console.error('❌ Failed to create Printify order:', {
+          shopifyVid, printifyVariantId, scale, err: err?.message || err
+        });
+      }
+    } else {
+      // Collect into batch (one Printify order)
+      batchItems.push({
+        imageUrl: item.custom_image,
+        backImageUrl,
+        variantId: printifyVariantId,
+        quantity: item.quantity,
+        position,
+        backPosition
+      });
+    }
+  }
+
+  // After collecting all items, submit as a single Printify order
+  if (BATCH_MODE && batchItems.length > 0) {
+    try {
+      const response = await createOrderBatch({
+        items: batchItems,
+        recipient: orderRecipient,
+        externalId: `shopify-${order?.id || Date.now()}`
+      });
+      console.log('✅ Printify BATCH order created:', response?.id || '[no id]', { count: batchItems.length });
+    } catch (err) {
+      console.error('❌ Failed to create Printify BATCH order:', {
+        count: batchItems.length, err: err?.message || err
+      });
+    }
   }
 }
-
-// --- normalize x/y using real area dims ---
-const topPx  = parseFloat(item.design_specs?.top  || '0');
-const leftPx = parseFloat(item.design_specs?.left || '0');
-let x = 0.5, y = 0.5;
-
-if (phFront?.width && phFront?.height) {
-  const imgW = phFront.width  * scale;
-  const imgH = phFront.height * scale;
-  x = Math.min(1, Math.max(0, (leftPx + imgW / 2) / phFront.width));
-  y = Math.min(1, Math.max(0, (topPx  + imgH / 2) / phFront.height));
-}
-
-const position = { x, y, scale, angle: 0 };
-
-// --- back placement: keep multiplier approach (clamped) ---
-const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1);
-const backScale = Math.max(0.1, Math.min(2, scale * BACK_SCALE_MULT));
-const backPosition = { x: 0.5, y: 0.5, scale: backScale, angle: 0 };
-
-// --- make sure 'area' exists before you pass it below ---
-const area = printAreas?.[shopifyVid] || null;
-
-// --- build recipient from the Shopify order (shipping address) ---
-const r = order?.shipping_address || {};
-const recipient = {
-  name: [r.first_name, r.last_name].filter(Boolean).join(' ') || r.name || 'Customer',
-  email: (order?.email || order?.customer?.email || '').trim() || undefined,
-  phone: (r.phone || order?.phone || '').trim() || undefined,
-  address1: r.address1 || '',
-  address2: r.address2 || '',
-  city: r.city || '',
-  region: r.province || r.province_code || '',
-  country: r.country_code || r.country || '',
-  zip: r.zip || ''
-};
-
-// --- finally, call createOrder ---
-const backImageUrl =
-  item.clue_output_mode === 'back' && item.clues_image_url ? item.clues_image_url : undefined;
-
-try {
-  const response = await createOrder({
-    imageUrl: item.custom_image,
-    backImageUrl,
-    variantId: printifyVariantId,
-    quantity: item.quantity,
-    position,
-    backPosition,
-    recipient,
-    printArea: area || undefined,
-    meta: { shopifyVid, title: item.title }
-  });
-
-  console.log('✅ Printify order created:', response?.id || '[no id]', { shopifyVid, printifyVariantId, scale });
-} catch (err) {
-  console.error('❌ Failed to create Printify order:', {
-    shopifyVid, printifyVariantId, scale, err: err?.message || err
-  });
-}
-}
-  }
 
 app.post('/webhooks/orders/create', async (req, res) => {
   // req.body is a Buffer because of bodyParser.raw() mounted earlier for this path
@@ -609,42 +647,41 @@ app.post('/webhooks/orders/create', async (req, res) => {
     const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
     const seen = [];
 
-for (const li of lineItems) {
-  const props = Array.isArray(li.properties) ? li.properties : [];
-  const getProp = (name) => {
-    const p = props.find(x => x && x.name === name);
-    return p ? String(p.value || '') : '';
-  };
+    for (const li of lineItems) {
+      const props = Array.isArray(li.properties) ? li.properties : [];
+      const getProp = (name) => {
+        const p = props.find(x => x && x.name === name);
+        return p ? String(p.value || '') : '';
+      };
 
-  const pid = getProp('_puzzle_id');
-  if (!pid) continue;
+      const pid = getProp('_puzzle_id');
+      if (!pid) continue;
 
-  const crosswordImage = getProp('_custom_image');
-  const cluesImage     = getProp('_clues_image_url');
+      const crosswordImage = getProp('_custom_image');
+      const cluesImage     = getProp('_clues_image_url');
 
-  // NEW: parse text from design_specs / _clues_text
-  const design_specs_raw = getProp('_design_specs') || '';
-  let design_specs = null;
-  try {
-    design_specs = design_specs_raw ? JSON.parse(design_specs_raw) : null;
-  } catch {}
-  const explicitCluesText = getProp('_clues_text') || '';
-  const cluesText = (design_specs && String(design_specs.clues_text || '').trim())
-    || String(explicitCluesText || '').trim()
-    || '';
+      // NEW: parse text from design_specs / _clues_text
+      const design_specs_raw = getProp('_design_specs') || '';
+      let design_specs = null;
+      try {
+        design_specs = design_specs_raw ? JSON.parse(design_specs_raw) : null;
+      } catch {}
+      const explicitCluesText = getProp('_clues_text') || '';
+      const cluesText = (design_specs && String(design_specs.clues_text || '').trim())
+        || String(explicitCluesText || '').trim()
+        || '';
 
-  PaidPuzzles.set(pid, {
-    orderId: String(order.id),
-    email: (order.email || order?.customer?.email || '') + '',
-    crosswordImage,
-    cluesImage,
-    cluesText,  // stored for text-typeset PDFs
-    when: new Date().toISOString(),
-  });
+      PaidPuzzles.set(pid, {
+        orderId: String(order.id),
+        email: (order.email || order?.customer?.email || '') + '',
+        crosswordImage,
+        cluesImage,
+        cluesText,  // stored for text-typeset PDFs
+        when: new Date().toISOString(),
+      });
 
-  seen.push(pid);
-}
-
+      seen.push(pid);
+    }
 
     if (seen.length) console.log('🔐 Stored paid puzzleIds:', seen);
   } catch (e) {
@@ -762,11 +799,11 @@ for (const li of lineItems) {
       }
 
       // send email
-try {
-  await sendEmailWithAttachment({
-    to,
-    subject: 'Your printable crossword (PDF)',
-    html: `
+      try {
+        await sendEmailWithAttachment({
+          to,
+          subject: 'Your printable crossword (PDF)',
+          html: `
       <p>Hi there,</p>
       <p>Thank you for your purchase! 🎉</p>
       <p>Your personalized crossword puzzle is attached as a PDF. It includes:</p>
@@ -783,13 +820,13 @@ try {
       <p>Enjoy your puzzle and happy solving!</p>
       <p>— The LoveGrids Team</p>
     `,
-    filename: `LoveFrames_crossword-${String(pid).slice(0,8)}.pdf`,
-    pdfBuffer
-  });
-  console.log(`📧 Sent PDF email for puzzle ${pid} to ${to}`);
-} catch (e) {
-  console.error(`❌ sendEmailWithAttachment failed for puzzle ${pid}:`, e);
-}
+          filename: `LoveFrames_crossword-${String(pid).slice(0,8)}.pdf`,
+          pdfBuffer
+        });
+        console.log(`📧 Sent PDF email for puzzle ${pid} to ${to}`);
+      } catch (e) {
+        console.error(`❌ sendEmailWithAttachment failed for puzzle ${pid}:`, e);
+      }
 
       sent.add(pid);
     }
@@ -1145,7 +1182,7 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
       return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
     }
 
-// 0) Snapshot current images so we can return only the new mockups
+    // 0) Snapshot current images so we can return only the new mockups
     const before = await fetchProduct(productId);
     const beforeSrcs = new Set((before?.images || []).map(i => i?.src).filter(Boolean));
     
@@ -1171,27 +1208,27 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
       await new Promise(r => setTimeout(r, 1200)); // ~12s max
     }
 
-       // 4) Delta: only new images (prefer images tagged with this variant)
-   const afterImgs = Array.isArray(product?.images) ? product.images : [];
-   const deltas = afterImgs.filter(i => i?.src && !beforeSrcs.has(i.src));
-   const vId = Number(variantId);
-   const tagged = deltas.filter(i => {
-     const ids = Array.isArray(i.variant_ids) ? i.variant_ids.map(Number) : null;
-     return !ids || ids.includes(vId);
-   });
-   const imgs = (tagged.length ? tagged : deltas).map(i => i.src).filter(Boolean);
-// keep newest-first for client
-const imgsNewestFirst = imgs.slice().reverse();
+    // 4) Delta: only new images (prefer images tagged with this variant)
+    const afterImgs = Array.isArray(product?.images) ? product.images : [];
+    const deltas = afterImgs.filter(i => i?.src && !beforeSrcs.has(i.src));
+    const vId = Number(variantId);
+    const tagged = deltas.filter(i => {
+      const ids = Array.isArray(i.variant_ids) ? i.variant_ids.map(Number) : null;
+      return !ids || ids.includes(vId);
+    });
+    const imgs = (tagged.length ? tagged : deltas).map(i => i.src).filter(Boolean);
+    // keep newest-first for client
+    const imgsNewestFirst = imgs.slice().reverse();
 
-// also return the hero so the client can drop it
-const heroSrc = before?.images?.[0]?.src || null;
-    res.json({ success: true, uploadedImage: uploaded, product, imgs: imgsNewestFirst,
-  heroSrc });
+    // also return the hero so the client can drop it
+    const heroSrc = before?.images?.[0]?.src || null;
+    res.json({ success: true, uploadedImage: uploaded, product, imgs: imgsNewestFirst, heroSrc });
   } catch (err) {
     console.error("❌ Preview generation failed:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
 // [ADD] Return Printify placeholder box (width/height) for a variant and position
 // PAYLOAD:
 //   Request: GET /apps/crossword/placeholder-size?variantId=<number>&position=<string>
@@ -1233,8 +1270,8 @@ app.get('/apps/crossword/placeholder-size', async (req, res) => {
 
 app.get('/api/printify/products', async (req, res) => {
   try {
-const qs  = new URLSearchParams(req.query).toString();
-const url = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json${qs ? `?${qs}` : ''}`;
+    const qs  = new URLSearchParams(req.query).toString();
+    const url = `https://api.printify.com/v1/shops/${process.env.PRINTIFY_SHOP_ID}/products.json${qs ? `?${qs}` : ''}`;
     const products = await safeFetch(url, {
       headers: {
         Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
@@ -1615,8 +1652,8 @@ app.post('/register-purchase-and-download', async (req, res) => {
     const pdfBytes = await buildGridAndCluesPdf({
       gridBuf: puzzleBuf || undefined,
       cluesBuf: cluesBuf || undefined,
-  cluesText: cluesText || '',         
-  puzzleId
+      cluesText: cluesText || '',         
+      puzzleId
     });
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -1656,42 +1693,42 @@ app.all('/preview-pdf', async (req, res) => {
       opts: { scale }
     });
 
-// Optional: overlay tiled/small watermark without affecting layout
-if (watermark) {
-  const doc = await PDFDocument.load(pdfBytes);
-  const pages = doc.getPages();
+    // Optional: overlay tiled/small watermark without affecting layout
+    if (watermark) {
+      const doc = await PDFDocument.load(pdfBytes);
+      const pages = doc.getPages();
 
-  // --- Tweak these if you want ---
-  const WM_TEXT   = 'LOVEFRAMES';
-  const WM_SIZE   = 14;     // small text size
-  const WM_OPAC   = 0.18;   // subtle opacity
-  const WM_ANGLE  = 30;     // degrees
-  const STEP_X    = 140;    // horizontal spacing between repeats
-  const STEP_Y    = 110;    // vertical spacing between repeats
-  const X_OFFSET  = 0;      // shift pattern horizontally if needed
-  const Y_OFFSET  = 0;      // shift pattern vertically if needed
-  // --------------------------------
+      // --- Tweak these if you want ---
+      const WM_TEXT   = 'LOVEFRAMES';
+      const WM_SIZE   = 14;     // small text size
+      const WM_OPAC   = 0.18;   // subtle opacity
+      const WM_ANGLE  = 30;     // degrees
+      const STEP_X    = 140;    // horizontal spacing between repeats
+      const STEP_Y    = 110;    // vertical spacing between repeats
+      const X_OFFSET  = 0;      // shift pattern horizontally if needed
+      const Y_OFFSET  = 0;      // shift pattern vertically if needed
+      // --------------------------------
 
-  for (const page of pages) {
-    const { width: a4w, height: a4h } = page.getSize();
+      for (const page of pages) {
+        const { width: a4w, height: a4h } = page.getSize();
 
-    // Tile beyond page bounds so rotation has full coverage
-    for (let x = -a4w; x < a4w * 2; x += STEP_X) {
-      for (let y = -a4h; y < a4h * 2; y += STEP_Y) {
-        page.drawText(WM_TEXT, {
-          x: x + X_OFFSET,
-          y: y + Y_OFFSET,
-          size: WM_SIZE,
-          color: rgb(0.8, 0.1, 0.1),
-          rotate: { type: 'degrees', angle: WM_ANGLE },
-          opacity: WM_OPAC,
-        });
+        // Tile beyond page bounds so rotation has full coverage
+        for (let x = -a4w; x < a4w * 2; x += STEP_X) {
+          for (let y = -a4h; y < a4h * 2; y += STEP_Y) {
+            page.drawText(WM_TEXT, {
+              x: x + X_OFFSET,
+              y: y + Y_OFFSET,
+              size: WM_SIZE,
+              color: rgb(0.8, 0.1, 0.1),
+              rotate: { type: 'degrees', angle: WM_ANGLE },
+              opacity: WM_OPAC,
+            });
+          }
+        }
       }
-    }
-  }
 
-  pdfBytes = await doc.save();
-}
+      pdfBytes = await doc.save();
+    }
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', 'inline; filename="crossword-preview.pdf"');
@@ -1741,8 +1778,8 @@ app.get('/apps/crossword/download-pdf', async (req, res) => {
     const pdfBytes = await buildGridAndCluesPdf({
       gridBuf: puzzleBuf || undefined,
       cluesBuf: cluesBuf || undefined,
-  cluesText: (rec.cluesText || ''),  
-  puzzleId
+      cluesText: (rec.cluesText || ''),  
+      puzzleId
     });
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -1863,15 +1900,14 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId) {
               : [];
 
   for (const area of areas) {
-const placeholders = area?.placeholders || area?.placeholders_json || area?.placeholdersList || [];
-for (const ph of placeholders) {
-  const pos = (ph?.position || ph?.name || ph)?.toString().trim().toLowerCase();
-  if (pos) names.add(pos);
-}
-// keep name, but also capture area.position if present
-if (area?.position) names.add(String(area.position).trim().toLowerCase());
-if (area?.name)     names.add(String(area.name).trim().toLowerCase());
-
+    const placeholders = area?.placeholders || area?.placeholders_json || area?.placeholdersList || [];
+    for (const ph of placeholders) {
+      const pos = (ph?.position || ph?.name || ph)?.toString().trim().toLowerCase();
+      if (pos) names.add(pos);
+    }
+    // keep name, but also capture area.position if present
+    if (area?.position) names.add(String(area.position).trim().toLowerCase());
+    if (area?.name)     names.add(String(area.name).trim().toLowerCase());
   }
 
   if (names.size === 0) names.add('front'); // safe fallback
@@ -1945,28 +1981,27 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
     }
 
     // Get placeholder names (front, back, etc.)
-let placeholders = ['front'];
-try {
-  placeholders = await getVariantPlaceholderNames(bp, pp);
-} catch (e) {
-  // keep fallback
-}
+    let placeholders = ['front'];
+    try {
+      placeholders = await getVariantPlaceholderNames(bp, pp);
+    } catch (e) {
+      // keep fallback
+    }
 
-// 🔧 ADD: merge variant-specific placements from the actual shop product
-try {
-  const detail = await safeFetch(`${PRINTIFY_BASE}/shops/${SHOP_ID}/products/${product.id}.json`, { headers: PIFY_HEADERS });
-  const fromProduct = (detail?.print_areas || [])
-    .flatMap(a => (a?.placeholders || []).map(ph =>
-      (ph?.position || ph?.name || '').toString().trim().toLowerCase()
-    ))
-    .filter(Boolean);
-  placeholders = Array.from(new Set([...placeholders, ...fromProduct]));
-} catch (_) {
-  // ignore and rely on catalog-only data
-}
+    // 🔧 ADD: merge variant-specific placements from the actual shop product
+    try {
+      const detail = await safeFetch(`${PRINTIFY_BASE}/shops/${SHOP_ID}/products/${product.id}.json`, { headers: PIFY_HEADERS });
+      const fromProduct = (detail?.print_areas || [])
+        .flatMap(a => (a?.placeholders || []).map(ph =>
+          (ph?.position || ph?.name || '').toString().trim().toLowerCase()
+        ))
+        .filter(Boolean);
+      placeholders = Array.from(new Set([...placeholders, ...fromProduct]));
+    } catch (_) {
+      // ignore and rely on catalog-only data
+    }
 
-const hasBack = placeholders.some(n => /back|rear|reverse|backside|secondary|alt/i.test(n));
-
+    const hasBack = placeholders.some(n => /back|rear|reverse|backside|secondary|alt/i.test(n));
 
     console.log(`✅ Variant ${variantId} specs: has_back=${hasBack}, placeholders=${placeholders.join(',')}`);
 
