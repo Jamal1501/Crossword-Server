@@ -514,6 +514,129 @@ const payload = {
   return orderResp;
 }
 
+// --- BATCH ORDER CREATION (additive) -----------------------------------------
+export async function createOrderBatch({
+  items = [],          // array of { imageUrl, backImageUrl?, variantId, quantity, position, backPosition }
+  recipient,           // same shape as in createOrder
+  externalId,          // optional
+  label = 'Crossword Custom Order',
+  shipping_method = 1, // 1 = standard
+  send_shipping_notification = true
+}) {
+  if (!Array.isArray(items) || items.length === 0) {
+    throw new Error('createOrderBatch: items[] is required and cannot be empty');
+  }
+  if (!recipient) {
+    throw new Error('createOrderBatch: recipient is required');
+  }
+
+  // Build each line_item exactly like createOrder does, but per item
+  const line_items = [];
+  let commonPrintProviderId = null;
+  let commonBlueprintId = null;
+
+  for (const it of items) {
+    const { imageUrl, backImageUrl, variantId, quantity = 1, position, backPosition } = it;
+    if ((!imageUrl && !it.base64Image) || !variantId) {
+      throw new Error('createOrderBatch: each item needs imageUrl/base64Image and variantId');
+    }
+
+    // Resolve bp/pp for this variant
+    const { blueprintId, printProviderId } = await resolveBpPpForVariant(variantId);
+
+    // Optional sanity: ensure all items share provider (to keep one shipment).
+    // If they don’t, Printify may split shipments. We simply allow it, but you can enforce.
+    commonPrintProviderId ??= printProviderId;
+    commonBlueprintId ??= blueprintId;
+
+    // Upload images (front + optional back)
+    const uploadedFront = imageUrl
+      ? await uploadImageFromUrl(imageUrl)
+      : await uploadImageFromBase64(it.base64Image);
+
+    let uploadedBack = null;
+    if (backImageUrl) {
+      uploadedBack = await uploadImageFromUrl(backImageUrl);
+    }
+
+    // Prepare positions and scales (mirrors createOrder)
+    const px = (v, d=0) => (typeof v === 'number' && isFinite(v) ? v : d);
+    const x  = px(position?.x, 0.5);
+    const y  = px(position?.y, 0.5);
+    const s  = Math.max(0, Math.min(1, px(position?.scale, 1)));
+    const a  = px(position?.angle, 0);
+
+    let linePrintAreas = {
+      front: [{
+        id: uploadedFront?.id || undefined,
+        src: uploadedFront?.file_url || uploadedFront?.url || imageUrl,
+        name: uploadedFront?.file_name || 'front.png',
+        type: 'image/png',
+        height: uploadedFront?.height || 0,
+        width:  uploadedFront?.width  || 0,
+        x, y, scale: s, angle: a
+      }]
+    };
+
+    if (uploadedBack || backImageUrl) {
+      const bx = px(backPosition?.x, 0.5);
+      const by = px(backPosition?.y, 0.5);
+      const bs = Math.max(0, Math.min(1, px(backPosition?.scale, 1)));
+      const ba = px(backPosition?.angle, 0);
+
+      linePrintAreas.back = [{
+        id: uploadedBack?.id || undefined,
+        src: uploadedBack?.file_url || uploadedBack?.url || backImageUrl,
+        name: uploadedBack?.file_name || 'back.png',
+        type: 'image/png',
+        height: uploadedBack?.height || 0,
+        width:  uploadedBack?.width  || 0,
+        x: bx, y: by, scale: bs, angle: ba
+      }];
+    }
+
+    // Printify expects { position: [...images] } → already structured above.
+    // Build the line_item
+    line_items.push({
+      variant_id: parseInt(variantId),
+      quantity: Math.max(1, Number(quantity) || 1),
+      print_provider_id: printProviderId,
+      blueprint_id: blueprintId,
+      print_areas: linePrintAreas
+    });
+  }
+
+  const payload = {
+    external_id: externalId || `batch-${Date.now()}`,
+    label,
+    line_items,
+    shipping_method,
+    send_shipping_notification,
+    address_to: {
+      first_name: recipient.name?.split(' ')[0] || '-',
+      last_name:  recipient.name?.split(' ').slice(1).join(' ') || '-',
+      email:      (recipient.email || '').trim() || undefined,
+      phone:      (recipient.phone || '').trim() || undefined,
+      country:    recipient.country || '',
+      region:     recipient.region || '',
+      address1:   recipient.address1 || '',
+      address2:   recipient.address2 || '',
+      city:       recipient.city || '',
+      zip:        recipient.zip || ''
+    }
+  };
+
+  console.log('📦 Final Printify BATCH payload:', JSON.stringify(payload, null, 2));
+
+  const orderUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/orders.json`;
+  const orderResp = await safeFetch(orderUrl, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload)
+  });
+
+  return orderResp;
+}
 
 
 /* Ensure an area object always has a placeholders array */
