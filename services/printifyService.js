@@ -710,7 +710,26 @@ export async function createOrderBatch({
     const fX = px(position?.x, 0.5);
     const fY = px(position?.y, 0.5);
     const fA = px(position?.angle, 0);
-    const fS = Math.max(0, Math.min(1, px(position?.scale, 1)));
+// Recompute scale to fit the actual Printify placeholder (contain-fit)
+const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
+let fS = px(position?.scale, 1);
+try {
+  const phFront = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
+  const containFront = clampContainScale({
+    Aw: phFront?.width, Ah: phFront?.height,
+    Iw: uploadedFront?.width, Ih: uploadedFront?.height,
+    requested: fS
+  });
+  fS = Math.max(0, Math.min(1, containFront * FRONT_SCALE_MULT));
+} catch (e) {
+  // fallback to provided scale if placeholder lookup fails
+  fS = Math.max(0, Math.min(1, fS * FRONT_SCALE_MULT));
+}
+
+// Debug: front scale decision
+console.log('[BATCH] front placeholder', phFront?.width, 'x', phFront?.height, 
+            'uploaded', uploadedFront?.width, 'x', uploadedFront?.height, 
+            'requested', px(position?.scale, 1), '→ final', fS);
 
     const files = [{
       placement: 'front',
@@ -734,7 +753,28 @@ export async function createOrderBatch({
       const bX = px(backPosition?.x, 0.5);
       const bY = px(backPosition?.y, 0.5);
       const bA = px(backPosition?.angle, 0);
-      const bS = Math.max(0, Math.min(1, px(backPosition?.scale, 1)));
+      // Recompute back scale (if back image present)
+const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
+let bS = px(backPosition?.scale, 1);
+try {
+  // Prefer explicit back placeholder if available; fall back to generic
+  const phBack = await getVariantPlaceholderByPos(blueprintId, printProviderId, parseInt(variantId), 'back')
+              || await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
+  const containBack = clampContainScale({
+    Aw: phBack?.width, Ah: phBack?.height,
+    Iw: uploadedBack?.width, Ih: uploadedBack?.height,
+    requested: bS
+  });
+  bS = Math.max(0, Math.min(1, containBack * BACK_SCALE_MULT));
+} catch (e) {
+  bS = Math.max(0, Math.min(1, bS * BACK_SCALE_MULT));
+}
+
+// Debug: back scale decision
+console.log('[BATCH] back placeholder', phBack?.width, 'x', phBack?.height, 
+            'uploaded', uploadedBack?.width, 'x', uploadedBack?.height, 
+            'requested', px(backPosition?.scale, 1), '→ final', bS);
+
 
       files.push({
         placement: 'back',
