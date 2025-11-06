@@ -489,7 +489,7 @@ export async function fetchProduct(productId) {
 }
 
 /* --------------------------
-   Order creation (front/back) — FIXED to use files[]
+   Order creation (front/back) — include BOTH files[] and print_areas for compatibility
 --------------------------- */
 export async function createOrder({
   imageUrl,
@@ -555,7 +555,7 @@ export async function createOrder({
   }
 
   // 4) Contain-fit scale for FRONT (avoid clipping)
-  const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 0.93);
+  const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
   let requestedFrontScale = (position?.scale ?? 1) * FRONT_SCALE_MULT;
   let finalScale = requestedFrontScale;
   try {
@@ -582,26 +582,50 @@ export async function createOrder({
   const fY = px(position?.y, 0.5);
   const fA = px(position?.angle, 0);
 
-  // 6) Build files array (Orders API expects files[], not print_areas)
+  // 6) Build files[] (Orders API modern)
   const files = [{
     placement: 'front',
     ...(uploadedFront?.id ? { image_id: uploadedFront.id } : { image_url: imageUrl }),
     position: { x: fX, y: fY, scale: finalScale, angle: fA }
   }];
 
+  // Legacy mirror: print_areas{} for validators that still require it
+  const print_areas = {
+    front: [{
+      id: uploadedFront?.id || undefined,
+      src: uploadedFront?.file_url || uploadedFront?.url || imageUrl,
+      name: uploadedFront?.file_name || 'front.png',
+      type: 'image/png',
+      height: uploadedFront?.height || 0,
+      width:  uploadedFront?.width || 0,
+      x: fX, y: fY, scale: finalScale, angle: fA
+    }]
+  };
+
   if (uploadedBack || backImageUrl) {
     const bX = px(backPosition?.x, 0.5);
     const bY = px(backPosition?.y, 0.5);
     const bA = px(backPosition?.angle, 0);
-    const bS = Math.max(0, Math.min(1, px(backPosition?.scale, position?.scale ?? 0.93)));
+    const bS = Math.max(0, Math.min(1, px(backPosition?.scale, position?.scale ?? 1)));
+
     files.push({
       placement: 'back',
       ...(uploadedBack?.id ? { image_id: uploadedBack.id } : { image_url: backImageUrl }),
       position: { x: bX, y: bY, scale: bS, angle: bA }
     });
+
+    print_areas.back = [{
+      id: uploadedBack?.id || undefined,
+      src: uploadedBack?.file_url || uploadedBack?.url || backImageUrl,
+      name: uploadedBack?.file_name || 'back.png',
+      type: 'image/png',
+      height: uploadedBack?.height || 0,
+      width:  uploadedBack?.width || 0,
+      x: bX, y: bY, scale: bS, angle: bA
+    }];
   }
 
-  // 7) Compose order payload
+  // 7) Compose order payload (includes both shapes)
   const payload = {
     external_id: `order-${Date.now()}`,
     label: 'Crossword Custom Order',
@@ -610,7 +634,9 @@ export async function createOrder({
       quantity: Math.max(1, Number(quantity) || 1),
       print_provider_id: Number(printProviderId),
       blueprint_id: Number(blueprintId),
-      files
+      // 👇 include both for compatibility
+      files,
+      print_areas
     }],
     shipping_method: 1,
     send_shipping_notification: true,
@@ -641,7 +667,7 @@ export async function createOrder({
 }
 
 /* --------------------------
-   BATCH ORDER CREATION — FIXED to use files[]
+   BATCH ORDER CREATION — include BOTH files[] and print_areas
 --------------------------- */
 export async function createOrderBatch({
   items = [],          // array of { imageUrl, backImageUrl?, base64Image?, variantId, quantity, position, backPosition }
@@ -659,8 +685,6 @@ export async function createOrderBatch({
   }
 
   const line_items = [];
-  let commonPrintProviderId = null;
-  let commonBlueprintId = null;
 
   for (const it of items) {
     const { imageUrl, backImageUrl, base64Image, variantId, quantity = 1, position, backPosition } = it;
@@ -670,8 +694,6 @@ export async function createOrderBatch({
 
     // Resolve bp/pp for this variant
     const { blueprintId, printProviderId } = await resolveBpPpForVariant(variantId);
-    commonPrintProviderId ??= printProviderId;
-    commonBlueprintId ??= blueprintId;
 
     // Upload images (front + optional back)
     const uploadedFront = imageUrl
@@ -688,7 +710,7 @@ export async function createOrderBatch({
     const fX = px(position?.x, 0.5);
     const fY = px(position?.y, 0.5);
     const fA = px(position?.angle, 0);
-    const fS = Math.max(0, Math.min(1, px(position?.scale, 0.93)));
+    const fS = Math.max(0, Math.min(1, px(position?.scale, 1)));
 
     const files = [{
       placement: 'front',
@@ -696,16 +718,39 @@ export async function createOrderBatch({
       position: { x: fX, y: fY, scale: fS, angle: fA }
     }];
 
+    const print_areas = {
+      front: [{
+        id: uploadedFront?.id || undefined,
+        src: uploadedFront?.file_url || uploadedFront?.url || imageUrl,
+        name: uploadedFront?.file_name || 'front.png',
+        type: 'image/png',
+        height: uploadedFront?.height || 0,
+        width:  uploadedFront?.width || 0,
+        x: fX, y: fY, scale: fS, angle: fA
+      }]
+    };
+
     if (uploadedBack || backImageUrl) {
       const bX = px(backPosition?.x, 0.5);
       const bY = px(backPosition?.y, 0.5);
       const bA = px(backPosition?.angle, 0);
-      const bS = Math.max(0, Math.min(1, px(backPosition?.scale, 0.93)));
+      const bS = Math.max(0, Math.min(1, px(backPosition?.scale, 1)));
+
       files.push({
         placement: 'back',
         ...(uploadedBack?.id ? { image_id: uploadedBack.id } : { image_url: backImageUrl }),
         position: { x: bX, y: bY, scale: bS, angle: bA }
       });
+
+      print_areas.back = [{
+        id: uploadedBack?.id || undefined,
+        src: uploadedBack?.file_url || uploadedBack?.url || backImageUrl,
+        name: uploadedBack?.file_name || 'back.png',
+        type: 'image/png',
+        height: uploadedBack?.height || 0,
+        width:  uploadedBack?.width || 0,
+        x: bX, y: bY, scale: bS, angle: bA
+      }];
     }
 
     line_items.push({
@@ -713,7 +758,9 @@ export async function createOrderBatch({
       quantity: Math.max(1, Number(quantity) || 1),
       print_provider_id: Number(printProviderId),
       blueprint_id: Number(blueprintId),
-      files
+      // 👇 include both shapes
+      files,
+      print_areas
     });
   }
 
