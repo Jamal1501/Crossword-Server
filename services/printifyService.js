@@ -713,8 +713,9 @@ export async function createOrderBatch({
 // Recompute scale to fit the actual Printify placeholder (contain-fit)
 const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
 let fS = px(position?.scale, 1);
+let phFront; // define in outer scope so we can log safely
 try {
-  const phFront = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
+  phFront = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
   const containFront = clampContainScale({
     Aw: phFront?.width, Ah: phFront?.height,
     Iw: uploadedFront?.width, Ih: uploadedFront?.height,
@@ -725,11 +726,14 @@ try {
   // fallback to provided scale if placeholder lookup fails
   fS = Math.max(0, Math.min(1, fS * FRONT_SCALE_MULT));
 }
+// Debug: front scale decision (guard for undefined)
+console.log(
+  '[BATCH] front placeholder',
+  phFront?.width, 'x', phFront?.height,
+  'uploaded', uploadedFront?.width, 'x', uploadedFront?.height,
+  'requested', px(position?.scale, 1), '→ final', fS
+);
 
-// Debug: front scale decision
-console.log('[BATCH] front placeholder', phFront?.width, 'x', phFront?.height, 
-            'uploaded', uploadedFront?.width, 'x', uploadedFront?.height, 
-            'requested', px(position?.scale, 1), '→ final', fS);
 
     const files = [{
       placement: 'front',
@@ -756,10 +760,11 @@ console.log('[BATCH] front placeholder', phFront?.width, 'x', phFront?.height,
       // Recompute back scale (if back image present)
 const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
 let bS = px(backPosition?.scale, 1);
+let phBack; // define in outer scope so we can log safely
 try {
   // Prefer explicit back placeholder if available; fall back to generic
-  const phBack = await getVariantPlaceholderByPos(blueprintId, printProviderId, parseInt(variantId), 'back')
-              || await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
+  phBack = (await getVariantPlaceholderByPos?.(blueprintId, printProviderId, parseInt(variantId), 'back'))
+        || (await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId)));
   const containBack = clampContainScale({
     Aw: phBack?.width, Ah: phBack?.height,
     Iw: uploadedBack?.width, Ih: uploadedBack?.height,
@@ -769,11 +774,14 @@ try {
 } catch (e) {
   bS = Math.max(0, Math.min(1, bS * BACK_SCALE_MULT));
 }
+// Debug: back scale decision (guard for undefined)
+console.log(
+  '[BATCH] back placeholder',
+  phBack?.width, 'x', phBack?.height,
+  'uploaded', uploadedBack?.width, 'x', uploadedBack?.height,
+  'requested', px(backPosition?.scale, 1), '→ final', bS
+);
 
-// Debug: back scale decision
-console.log('[BATCH] back placeholder', phBack?.width, 'x', phBack?.height, 
-            'uploaded', uploadedBack?.width, 'x', uploadedBack?.height, 
-            'requested', px(backPosition?.scale, 1), '→ final', bS);
 
 
       files.push({
