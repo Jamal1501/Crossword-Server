@@ -555,7 +555,7 @@ export async function createOrder({
   }
 
   // 4) Contain-fit scale for FRONT (avoid clipping)
-  const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
+  const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 0.93);
   let requestedFrontScale = (position?.scale ?? 1) * FRONT_SCALE_MULT;
   let finalScale = requestedFrontScale;
   try {
@@ -593,7 +593,7 @@ export async function createOrder({
     const bX = px(backPosition?.x, 0.5);
     const bY = px(backPosition?.y, 0.5);
     const bA = px(backPosition?.angle, 0);
-    const bS = Math.max(0, Math.min(1, px(backPosition?.scale, position?.scale ?? 1)));
+    const bS = Math.max(0, Math.min(1, px(backPosition?.scale, position?.scale ?? 0.93)));
     files.push({
       placement: 'back',
       ...(uploadedBack?.id ? { image_id: uploadedBack.id } : { image_url: backImageUrl }),
@@ -688,7 +688,7 @@ export async function createOrderBatch({
     const fX = px(position?.x, 0.5);
     const fY = px(position?.y, 0.5);
     const fA = px(position?.angle, 0);
-    const fS = Math.max(0, Math.min(1, px(position?.scale, 1)));
+    const fS = Math.max(0, Math.min(1, px(position?.scale, 0.93)));
 
     const files = [{
       placement: 'front',
@@ -700,7 +700,7 @@ export async function createOrderBatch({
       const bX = px(backPosition?.x, 0.5);
       const bY = px(backPosition?.y, 0.5);
       const bA = px(backPosition?.angle, 0);
-      const bS = Math.max(0, Math.min(1, px(backPosition?.scale, 1)));
+      const bS = Math.max(0, Math.min(1, px(backPosition?.scale, 0.93)));
       files.push({
         placement: 'back',
         ...(uploadedBack?.id ? { image_id: uploadedBack.id } : { image_url: backImageUrl }),
