@@ -56,6 +56,24 @@ const app = express();
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use((req, res, next) => { res.setHeader('Vary', 'Origin'); next(); });
+// --- HARDEN CORS: ensure headers even on errors and non-Express 503s ---
+app.use((req, res, next) => {
+  try {
+    const origin = req.headers.origin || '';
+    const allowed = !origin || origin === 'null' || whitelist.some((re) => re.test(origin));
+    if (allowed) {
+      res.setHeader('Access-Control-Allow-Origin', origin || '*');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers',
+        'Content-Type, Authorization, X-Requested-With, X-Shopify-Topic, X-Shopify-Order-Id, X-Shopify-Hmac-Sha256, X-Shopify-Webhook-Id, Accept, Origin'
+      );
+      res.setHeader('Vary', 'Origin');
+    }
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+  } catch (_) { /* noop */ }
+  next();
+});
 
 // Shopify webhook needs raw body (must be before any JSON parser)
 app.use('/webhooks/orders/create', bodyParser.raw({ type: 'application/json', limit: '2mb' }));
@@ -862,11 +880,22 @@ app.post('/admin/generate-variant-map', async (req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('Error:', err);
+  // Ensure CORS headers on error responses too
+  try {
+    const origin = req.headers.origin || '';
+    const allowed = !origin || origin === 'null' || whitelist.some((re) => re.test(origin));
+    if (allowed) {
+      res.setHeader('Access-Control-Allow-Origin', origin || '*');
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Vary', 'Origin');
+    }
+  } catch (_) { /* noop */ }
   res.status(err.status || 500).json({
     error: process.env.NODE_ENV === 'development' ? err.message : 'Internal server error',
     details: process.env.NODE_ENV === 'development' ? err.stack : undefined,
   });
 });
+
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
