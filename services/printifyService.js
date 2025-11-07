@@ -37,6 +37,79 @@ export async function safeFetch(url, options = {}) {
   return res.status === 204 ? null : await res.json();
 }
 
+// --- NEW: fetch required placements (front/back/etc.) for a blueprint+provider ---
+export async function fetchRequiredPlacements(blueprintId, printProviderId) {
+  const url = `${BASE_URL}/catalog/blueprints/${Number(blueprintId)}/print_providers/${Number(printProviderId)}.json`;
+  let required = ['front'];
+  try {
+    const spec = await safeFetch(url, { headers: authHeaders() });
+    // spec.print_areas[].placeholders: ["front","back",...]
+    const areas = Array.isArray(spec?.print_areas) ? spec.print_areas : [];
+    const set = new Set();
+    for (const a of areas) {
+      const phs = Array.isArray(a?.placeholders) ? a.placeholders : [];
+      for (const p of phs) set.add(String(p).toLowerCase());
+      if (a?.position) set.add(String(a.position).toLowerCase());
+      if (a?.name) set.add(String(a.name).toLowerCase());
+    }
+    required = Array.from(set);
+    if (!required.length) required = ['front'];
+  } catch (e) {
+    console.warn('⚠️ fetchRequiredPlacements failed; defaulting to ["front"]:', e?.message || e);
+  }
+  // normalize common aliases
+  required = required.map(s => (s === 'rear' || s === 'reverse') ? 'back' : s);
+  return required;
+}
+
+// --- NEW: 1x1 transparent PNG (base64) uploader for missing placements ---
+export function tinyTransparentPngBase64() {
+  return 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
+}
+
+// --- NEW: normalize outgoing files/print_areas to EXACT provider-required set ---
+export async function normalizeItemToProvider({ item, provided, blueprintId, printProviderId }) {
+  // required = order matters as provider expects
+  const required = await fetchRequiredPlacements(blueprintId, printProviderId);
+  console.log('🧩 Provider requires placements:', required, 'for bp:', blueprintId, 'pp:', printProviderId);
+
+  // Ensure we have a dict like { front: {...}, back: {...} } with id/x/y/scale/angle,width,height
+  const map = { ...provided };
+
+  // Attach transparent shim for any missing required placeholder
+  for (const ph of required) {
+    if (!map[ph]) {
+      console.log(`🫥 Missing required placement "${ph}" — attaching transparent shim`);
+      const upload = await uploadImageFromBase64(tinyTransparentPngBase64());
+      map[ph] = {
+        id: upload?.id,
+        src: null,
+        name: 'transparent.png',
+        type: 'image/png',
+        height: 1, width: 1,
+        x: 0.5, y: 0.5, scale: 1, angle: 0
+      };
+    }
+  }
+
+  // Rebuild item.files and item.print_areas strictly following `required` order
+  const files = [];
+  const print_areas = {};
+  for (const ph of required) {
+    const v = map[ph];
+    files.push({
+      placement: ph,
+      ...(v?.id ? { image_id: v.id } : {}),
+      position: { x: v?.x ?? 0.5, y: v?.y ?? 0.5, scale: v?.scale ?? 1, angle: v?.angle ?? 0 }
+    });
+    print_areas[ph] = [v];
+  }
+
+  item.files = files;
+  item.print_areas = print_areas;
+  return item;
+}
+
 /* --------------------------
    Shop product listing (filtered)
 --------------------------- */
@@ -625,6 +698,30 @@ export async function createOrder({
     }];
   }
 
+  // --- NEW: normalize outgoing placements to provider spec (single-order) ---
+try {
+  const meta = await resolveBpPpForVariant(parseInt(variantId));
+  const provided = {};
+  if (print_areas?.front?.[0]) provided.front = print_areas.front[0];
+  if (print_areas?.back?.[0])  provided.back  = print_areas.back[0];
+  const tmpItem = {
+    blueprint_id: Number(meta.blueprintId),
+    print_provider_id: Number(meta.printProviderId),
+    files, print_areas
+  };
+  await normalizeItemToProvider({
+    item: tmpItem,
+    provided,
+    blueprintId: meta.blueprintId,
+    printProviderId: meta.printProviderId
+  });
+  // replace local vars with normalized result
+  files = tmpItem.files;
+  print_areas = tmpItem.print_areas;
+} catch (e) {
+  console.warn('⚠️ Placement normalization (single) failed; proceeding as-is:', e?.message || e);
+}
+
   // 7) Compose order payload (includes both shapes)
   const payload = {
     external_id: `order-${Date.now()}`,
@@ -801,15 +898,40 @@ console.log(
       }];
     }
 
+    // --- NEW: normalize outgoing placements to provider spec (batch item) ---
+    try {
+      const provided = {};
+      if (print_areas?.front?.[0]) provided.front = print_areas.front[0];
+      if (print_areas?.back?.[0])  provided.back  = print_areas.back[0];
+
+      const tmpItem = {
+        blueprint_id: Number(blueprintId),
+        print_provider_id: Number(printProviderId),
+        files, print_areas
+      };
+
+      await normalizeItemToProvider({
+        item: tmpItem,
+        provided,
+        blueprintId,
+        printProviderId
+      });
+
+      files = tmpItem.files;
+      print_areas = tmpItem.print_areas;
+    } catch (e) {
+      console.warn('⚠️ Placement normalization (batch) failed; proceeding as-is:', e?.message || e);
+    }
+
     line_items.push({
       variant_id: parseInt(variantId),
       quantity: Math.max(1, Number(quantity) || 1),
       print_provider_id: Number(printProviderId),
       blueprint_id: Number(blueprintId),
-      // 👇 include both shapes
       files,
       print_areas
     });
+
   }
 
   const payload = {
