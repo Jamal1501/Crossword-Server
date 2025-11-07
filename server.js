@@ -23,10 +23,12 @@ const __dirname = path.dirname(__filename);
 const PRINT_AREAS_PATH = path.join(__dirname, 'print-areas.json');
 
 const whitelist = [
-  /^https:\/\/[^.]+\.myshopify\.com$/,          // your preview/admin storefront
+  /^https:\/\/[^.]+\.myshopify\.com$/,           // your preview/admin storefront
   /^https:\/\/[a-z0-9-]+\.shopifypreview\.com$/, // theme previews
-  /^https:\/\/loveframes\.shop$/                 // production
+  /^https:\/\/loveframes\.shop$/,                // production (root)
+  /^https:\/\/www\.loveframes\.shop$/            // production (www)
 ];
+
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin || origin === 'null') return callback(null, true);
