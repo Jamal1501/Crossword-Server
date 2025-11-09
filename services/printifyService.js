@@ -382,6 +382,28 @@ async function canonicalAreaForVariant({
   }];
 }
 
+// Build a blank area that covers a list of variants with provider-required placeholders (no images)
+async function blankAreaForVariants(blueprintId, printProviderId, variantIds) {
+  if (!variantIds.length) return [];
+  // Try provider spec; if 404, try variant placeholder names; fallback to ['front']
+  let required = await fetchRequiredPlacements(blueprintId, printProviderId);
+  if (!required || required.length === 1 && required[0] === 'front') {
+    try {
+      // probe first variant for declared positions
+      const names = await getVariantPlaceholderNames(blueprintId, printProviderId, variantIds[0]);
+      if (Array.isArray(names) && names.length) required = names;
+    } catch (_) { /* ignore */ }
+  }
+  if (!Array.isArray(required) || !required.length) required = ['front'];
+
+  const placeholders = required.map(pos => ({ position: pos, images: [] }));
+  return [{
+    variant_ids: variantIds.map(Number),
+    placeholders
+  }];
+}
+
+
 // Keep siblings but guarantee valid shape
 function sanitizeAreasKeepSiblings(areas) {
   const arr = Array.isArray(areas) ? areas : [];
@@ -394,19 +416,16 @@ function sanitizeAreasKeepSiblings(areas) {
   }));
 }
 
-/* Replace applyImageToProduct with canonical, provider-aware version */
+// === applyImageToProduct (single-side) ===
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
 
   const vId = Number(variantId);
+  const allVariantIds = (product?.variants || []).map(v => Number(v.id));
+  const remaining = allVariantIds.filter(id => id !== vId);
 
-  // keep siblings (other variants) but sanitize them
-  const sanitizedSiblings = sanitizeAreasKeepSiblings(
-    (product?.print_areas || []).filter(a => !(a?.variant_ids || []).map(Number).includes(vId))
-  );
-
-  // build a fresh, provider-required area only for this variant
+  // canonical area for the selected variant (provider-required positions)
   const canonicalArea = await canonicalAreaForVariant({
     blueprintId: product.blueprint_id,
     printProviderId: product.print_provider_id,
@@ -417,13 +436,21 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     backPlacement: null
   });
 
+  // blank coverage for every other variant
+  const blanks = await blankAreaForVariants(
+    product.blueprint_id,
+    product.print_provider_id,
+    remaining
+  );
+
   const payload = {
     title: product.title,
     description: product.description,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    print_areas: [...sanitizedSiblings, ...canonicalArea]
+    // IMPORTANT: send ONLY our canonical + blank areas (no stale zombie structures)
+    print_areas: [...blanks, ...canonicalArea]
   };
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
@@ -434,7 +461,8 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
   });
 }
 
-/* Replace applyImagesToProductDual with canonical, provider-aware version */
+
+// === applyImagesToProductDual (front+back) ===
 export async function applyImagesToProductDual(
   productId,
   variantId,
@@ -447,10 +475,8 @@ export async function applyImagesToProductDual(
   const product = await safeFetch(url, { headers: authHeaders() });
 
   const vId = Number(variantId);
-
-  const sanitizedSiblings = sanitizeAreasKeepSiblings(
-    (product?.print_areas || []).filter(a => !(a?.variant_ids || []).map(Number).includes(vId))
-  );
+  const allVariantIds = (product?.variants || []).map(v => Number(v.id));
+  const remaining = allVariantIds.filter(id => id !== vId);
 
   const canonicalArea = await canonicalAreaForVariant({
     blueprintId: product.blueprint_id,
@@ -462,13 +488,19 @@ export async function applyImagesToProductDual(
     backPlacement: backPlacement || frontPlacement
   });
 
+  const blanks = await blankAreaForVariants(
+    product.blueprint_id,
+    product.print_provider_id,
+    remaining
+  );
+
   const payload = {
     title: product.title,
     description: product.description,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    print_areas: [...sanitizedSiblings, ...canonicalArea]
+    print_areas: [...blanks, ...canonicalArea]
   };
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
