@@ -4,6 +4,7 @@ import fetch from 'node-fetch';
 const BASE_URL = 'https://api.printify.com/v1';
 const { PRINTIFY_API_KEY, PRINTIFY_SHOP_ID } = process.env;
 const SHOP_ID = process.env.PRINTIFY_SHOP_ID;
+
 const PIFY_HEADERS = {
   Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
   'Content-Type': 'application/json'
@@ -37,7 +38,11 @@ export async function safeFetch(url, options = {}) {
   return res.status === 204 ? null : await res.json();
 }
 
-// --- NEW: fetch required placements (front/back/etc.) for a blueprint+provider ---
+/* --------------------------
+   Catalog / provider requirements
+--------------------------- */
+
+// Fetch required placements (front/back/etc.) for a blueprint+provider
 export async function fetchRequiredPlacements(blueprintId, printProviderId) {
   const url = `${BASE_URL}/catalog/blueprints/${Number(blueprintId)}/print_providers/${Number(printProviderId)}.json`;
   let required = ['front'];
@@ -62,19 +67,17 @@ export async function fetchRequiredPlacements(blueprintId, printProviderId) {
   return required;
 }
 
-// --- NEW: 1x1 transparent PNG (base64) uploader for missing placements ---
+// 1x1 transparent PNG (base64) uploader for missing placements
 export function tinyTransparentPngBase64() {
   return 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
 }
 
-// --- NEW: normalize outgoing files/print_areas to EXACT provider-required set ---
+// Normalize outgoing files/print_areas to EXACT provider-required set
 export async function normalizeItemToProvider({ item, provided, blueprintId, printProviderId }) {
-  // required = order matters as provider expects
   const required = await fetchRequiredPlacements(blueprintId, printProviderId);
   console.log('🧩 Provider requires placements:', required, 'for bp:', blueprintId, 'pp:', printProviderId);
 
-  // Ensure we have a dict like { front: {...}, back: {...} } with id/x/y/scale/angle,width,height
-  const map = { ...provided };
+  const map = { ...provided }; // { front: {...}, back: {...} }
 
   // Attach transparent shim for any missing required placeholder
   for (const ph of required) {
@@ -338,95 +341,81 @@ export async function uploadImageFromBase64(base64Image) {
 }
 
 /* --------------------------
-   Product preview updaters (unchanged)
+   Product preview updaters — canonical + sanitized
 --------------------------- */
-function normalizePlaceholders(placeholders) {
-  const list = Array.isArray(placeholders) ? placeholders : [];
-  return list.map(p => ({
-    position: p?.position || 'front',
-    images: Array.isArray(p?.images) ? p.images : []
-  }));
-}
 
-function withPlaceholders(area) {
+// Canonical placeholder builders to avoid zombie structures
+function buildPlaceholder(position, imageId, placement) {
   return {
-    ...area,
-    placeholders: normalizePlaceholders(area?.placeholders)
+    position,
+    images: imageId ? [{
+      id: imageId,
+      x: placement?.x ?? 0.5,
+      y: placement?.y ?? 0.5,
+      scale: placement?.scale ?? 1,
+      angle: placement?.angle ?? 0
+    }] : [] // IMPORTANT: always an array (even when empty)
   };
 }
 
-function normalizeAreas(print_areas, allVariantIds = []) {
-  const arr = Array.isArray(print_areas) ? print_areas : [];
-  if (!arr.length) {
-    return [{
-      variant_ids: allVariantIds.length ? allVariantIds : [],
-      placeholders: []
-    }];
-  }
-  return arr.map(withPlaceholders);
+// Strict, provider-aware area for exactly one variant
+async function canonicalAreaForVariant({
+  blueprintId,
+  printProviderId,
+  variantId,
+  frontImageId,
+  backImageId,
+  frontPlacement,
+  backPlacement
+}) {
+  const required = await fetchRequiredPlacements(blueprintId, printProviderId); // e.g. ["front"] or ["front","back"]
+
+  const placeholders = required.map(pos => {
+    if (pos === 'front') return buildPlaceholder('front', frontImageId, frontPlacement);
+    if (pos === 'back')  return buildPlaceholder('back',  backImageId,  backPlacement ?? frontPlacement);
+    return buildPlaceholder(pos, null, null); // unknown/unused positions → empty images array (valid)
+  });
+
+  return [{
+    variant_ids: [Number(variantId)],
+    placeholders
+  }];
 }
 
-function upsertPlaceholder(placeholders, position, images) {
-  const list = Array.isArray(placeholders) ? placeholders : [];
-  const rest = list.filter(p => p && p.position !== position);
-  return normalizePlaceholders([...rest, { position, images }]);
+// Keep siblings but guarantee valid shape
+function sanitizeAreasKeepSiblings(areas) {
+  const arr = Array.isArray(areas) ? areas : [];
+  return arr.map(a => ({
+    ...a,
+    placeholders: (a?.placeholders || []).map(ph => ({
+      position: ph?.position || 'front',
+      images: Array.isArray(ph?.images) ? ph.images : [] // <= critical
+    }))
+  }));
 }
 
+/* Replace applyImageToProduct with canonical, provider-aware version */
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
 
   const vId = Number(variantId);
-  const allVariantIds = (product?.variants || []).map(v => Number(v.id));
-  const areas = normalizeAreas(product.print_areas, allVariantIds);
 
-  const newAreas = [];
-  let handled = false;
+  // keep siblings (other variants) but sanitize them
+  const sanitizedSiblings = sanitizeAreasKeepSiblings(
+    (product?.print_areas || []).filter(a => !(a?.variant_ids || []).map(Number).includes(vId))
+  );
 
-  for (const area0 of areas) {
-    const area = withPlaceholders(area0);
-    const ids = (area.variant_ids || []).map(Number);
-
-    if (ids.includes(vId)) {
-      const remaining = ids.filter(id => id !== vId);
-
-      const selectedArea = {
-        ...area,
-        variant_ids: [vId],
-        placeholders: upsertPlaceholder(area.placeholders, "front", [{
-          id: uploadedImageId,
-          x: placement?.x ?? 0.5,
-          y: placement?.y ?? 0.5,
-          scale: placement?.scale ?? 1,
-          angle: placement?.angle ?? 0
-        }])
-      };
-      newAreas.push(withPlaceholders(selectedArea));
-
-      if (remaining.length) {
-        newAreas.push(withPlaceholders({ ...area, variant_ids: remaining }));
-      }
-      handled = true;
-    } else {
-      newAreas.push(withPlaceholders(area));
-    }
-  }
-
-  if (!handled) {
-    newAreas.push({
-      variant_ids: [vId],
-      placeholders: normalizePlaceholders([{
-        position: "front",
-        images: [{
-          id: uploadedImageId,
-          x: placement?.x ?? 0.5,
-          y: placement?.y ?? 0.5,
-          scale: placement?.scale ?? 1,
-          angle: placement?.angle ?? 0
-        }]
-      }])
-    });
-  }
+  // build a fresh, provider-required area only for this variant
+  const canonicalArea = await canonicalAreaForVariant({
+    blueprintId: product.blueprint_id,
+    printProviderId: product.print_provider_id,
+    variantId: vId,
+    frontImageId: uploadedImageId,
+    backImageId: null,
+    frontPlacement: placement,
+    backPlacement: null
+  });
 
   const payload = {
     title: product.title,
@@ -434,7 +423,7 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    print_areas: normalizeAreas(newAreas, allVariantIds)
+    print_areas: [...sanitizedSiblings, ...canonicalArea]
   };
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
@@ -445,6 +434,7 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
   });
 }
 
+/* Replace applyImagesToProductDual with canonical, provider-aware version */
 export async function applyImagesToProductDual(
   productId,
   variantId,
@@ -457,81 +447,20 @@ export async function applyImagesToProductDual(
   const product = await safeFetch(url, { headers: authHeaders() });
 
   const vId = Number(variantId);
-  const allVariantIds = (product?.variants || []).map(v => Number(v.id));
-  const areas = normalizeAreas(product.print_areas, allVariantIds);
 
-  const finalBackPlacement = backPlacement || {
-    x: frontPlacement?.x ?? 0.5,
-    y: frontPlacement?.y ?? 0.5,
-    scale: frontPlacement?.scale ?? 1,
-    angle: frontPlacement?.angle ?? 0,
-  };
+  const sanitizedSiblings = sanitizeAreasKeepSiblings(
+    (product?.print_areas || []).filter(a => !(a?.variant_ids || []).map(Number).includes(vId))
+  );
 
-  const newAreas = [];
-  let handled = false;
-
-  for (const area0 of areas) {
-    const area = withPlaceholders(area0);
-    const ids = (area.variant_ids || []).map(Number);
-
-    if (ids.includes(vId)) {
-      const remaining = ids.filter(id => id !== vId);
-
-      let placeholders = normalizePlaceholders(area.placeholders || []);
-      placeholders = upsertPlaceholder(placeholders, "front", [{
-        id: frontImageId,
-        x: frontPlacement?.x ?? 0.5,
-        y: frontPlacement?.y ?? 0.5,
-        scale: frontPlacement?.scale ?? 0.9,
-        angle: frontPlacement?.angle ?? 0
-      }]);
-      placeholders = upsertPlaceholder(placeholders, "back", [{
-        id: backImageId,
-        x: finalBackPlacement.x ?? 0.5,
-        y: finalBackPlacement.y ?? 0.5,
-        scale: finalBackPlacement.scale ?? 1,
-        angle: finalBackPlacement.angle ?? 0
-      }]);
-
-      const selectedArea = { ...area, variant_ids: [vId], placeholders };
-      newAreas.push(withPlaceholders(selectedArea));
-
-      if (remaining.length) {
-        newAreas.push(withPlaceholders({ ...area, variant_ids: remaining }));
-      }
-      handled = true;
-    } else {
-      newAreas.push(withPlaceholders(area));
-    }
-  }
-
-  if (!handled) {
-    newAreas.push({
-      variant_ids: [vId],
-      placeholders: normalizePlaceholders([
-        {
-          position: "front",
-          images: [{
-            id: frontImageId,
-            x: frontPlacement?.x ?? 0.5,
-            y: frontPlacement?.y ?? 0.5,
-            scale: frontPlacement?.scale ?? 0.9,
-            angle: frontPlacement?.angle ?? 0
-          }]
-        },
-        {
-          position: "back",
-          images: [{
-            id: backImageId,
-            x: finalBackPlacement.x ?? 0.5,
-            y: finalBackPlacement.y ?? 0.5,
-            scale: finalBackPlacement.scale ?? 1,
-            angle: finalBackPlacement.angle ?? 0
-          }]
-        }
-      ])
-    });
-  }
+  const canonicalArea = await canonicalAreaForVariant({
+    blueprintId: product.blueprint_id,
+    printProviderId: product.print_provider_id,
+    variantId: vId,
+    frontImageId,
+    backImageId,
+    frontPlacement,
+    backPlacement: backPlacement || frontPlacement
+  });
 
   const payload = {
     title: product.title,
@@ -539,7 +468,7 @@ export async function applyImagesToProductDual(
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    print_areas: normalizeAreas(newAreas, allVariantIds)
+    print_areas: [...sanitizedSiblings, ...canonicalArea]
   };
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
@@ -562,7 +491,7 @@ export async function fetchProduct(productId) {
 }
 
 /* --------------------------
-   Order creation (front/back) — include BOTH files[] and print_areas for compatibility
+   Order creation (front/back) — include BOTH files[] and print_areas
 --------------------------- */
 export async function createOrder({
   imageUrl,
@@ -656,14 +585,14 @@ export async function createOrder({
   const fA = px(position?.angle, 0);
 
   // 6) Build files[] (Orders API modern)
-  const files = [{
+  let files = [{
     placement: 'front',
     ...(uploadedFront?.id ? { image_id: uploadedFront.id } : { image_url: imageUrl }),
     position: { x: fX, y: fY, scale: finalScale, angle: fA }
   }];
 
   // Legacy mirror: print_areas{} for validators that still require it
-  const print_areas = {
+  let print_areas = {
     front: [{
       id: uploadedFront?.id || undefined,
       src: uploadedFront?.file_url || uploadedFront?.url || imageUrl,
@@ -698,29 +627,29 @@ export async function createOrder({
     }];
   }
 
-  // --- NEW: normalize outgoing placements to provider spec (single-order) ---
-try {
-  const meta = await resolveBpPpForVariant(parseInt(variantId));
-  const provided = {};
-  if (print_areas?.front?.[0]) provided.front = print_areas.front[0];
-  if (print_areas?.back?.[0])  provided.back  = print_areas.back[0];
-  const tmpItem = {
-    blueprint_id: Number(meta.blueprintId),
-    print_provider_id: Number(meta.printProviderId),
-    files, print_areas
-  };
-  await normalizeItemToProvider({
-    item: tmpItem,
-    provided,
-    blueprintId: meta.blueprintId,
-    printProviderId: meta.printProviderId
-  });
-  // replace local vars with normalized result
-  files = tmpItem.files;
-  print_areas = tmpItem.print_areas;
-} catch (e) {
-  console.warn('⚠️ Placement normalization (single) failed; proceeding as-is:', e?.message || e);
-}
+  // 6.5) Normalize outgoing placements to provider spec (single-order)
+  try {
+    const meta = await resolveBpPpForVariant(parseInt(variantId));
+    const provided = {};
+    if (print_areas?.front?.[0]) provided.front = print_areas.front[0];
+    if (print_areas?.back?.[0])  provided.back  = print_areas.back[0];
+    const tmpItem = {
+      blueprint_id: Number(meta.blueprintId),
+      print_provider_id: Number(meta.printProviderId),
+      files, print_areas
+    };
+    await normalizeItemToProvider({
+      item: tmpItem,
+      provided,
+      blueprintId: meta.blueprintId,
+      printProviderId: meta.printProviderId
+    });
+    // replace local vars with normalized result
+    files = tmpItem.files;
+    print_areas = tmpItem.print_areas;
+  } catch (e) {
+    console.warn('⚠️ Placement normalization (single) failed; proceeding as-is:', e?.message || e);
+  }
 
   // 7) Compose order payload (includes both shapes)
   const payload = {
@@ -731,7 +660,6 @@ try {
       quantity: Math.max(1, Number(quantity) || 1),
       print_provider_id: Number(printProviderId),
       blueprint_id: Number(blueprintId),
-      // 👇 include both for compatibility
       files,
       print_areas
     }],
@@ -807,38 +735,36 @@ export async function createOrderBatch({
     const fX = px(position?.x, 0.5);
     const fY = px(position?.y, 0.5);
     const fA = px(position?.angle, 0);
-// Recompute scale to fit the actual Printify placeholder (contain-fit)
-const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
-let fS = px(position?.scale, 1);
-let phFront; // define in outer scope so we can log safely
-try {
-  phFront = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
-  const containFront = clampContainScale({
-    Aw: phFront?.width, Ah: phFront?.height,
-    Iw: uploadedFront?.width, Ih: uploadedFront?.height,
-    requested: fS
-  });
-  fS = Math.max(0, Math.min(1, containFront * FRONT_SCALE_MULT));
-} catch (e) {
-  // fallback to provided scale if placeholder lookup fails
-  fS = Math.max(0, Math.min(1, fS * FRONT_SCALE_MULT));
-}
-// Debug: front scale decision (guard for undefined)
-console.log(
-  '[BATCH] front placeholder',
-  phFront?.width, 'x', phFront?.height,
-  'uploaded', uploadedFront?.width, 'x', uploadedFront?.height,
-  'requested', px(position?.scale, 1), '→ final', fS
-);
 
+    // Recompute scale to fit the actual Printify placeholder (contain-fit)
+    const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
+    let fS = px(position?.scale, 1);
+    let phFront;
+    try {
+      phFront = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
+      const containFront = clampContainScale({
+        Aw: phFront?.width, Ah: phFront?.height,
+        Iw: uploadedFront?.width, Ih: uploadedFront?.height,
+        requested: fS
+      });
+      fS = Math.max(0, Math.min(1, containFront * FRONT_SCALE_MULT));
+    } catch (e) {
+      fS = Math.max(0, Math.min(1, fS * FRONT_SCALE_MULT));
+    }
+    console.log(
+      '[BATCH] front placeholder',
+      phFront?.width, 'x', phFront?.height,
+      'uploaded', uploadedFront?.width, 'x', uploadedFront?.height,
+      'requested', px(position?.scale, 1), '→ final', fS
+    );
 
-    const files = [{
+    let files = [{
       placement: 'front',
       ...(uploadedFront?.id ? { image_id: uploadedFront.id } : { image_url: imageUrl }),
       position: { x: fX, y: fY, scale: fS, angle: fA }
     }];
 
-    const print_areas = {
+    let print_areas = {
       front: [{
         id: uploadedFront?.id || undefined,
         src: uploadedFront?.file_url || uploadedFront?.url || imageUrl,
@@ -854,32 +780,29 @@ console.log(
       const bX = px(backPosition?.x, 0.5);
       const bY = px(backPosition?.y, 0.5);
       const bA = px(backPosition?.angle, 0);
+
       // Recompute back scale (if back image present)
-const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
-let bS = px(backPosition?.scale, 1);
-let phBack; // define in outer scope so we can log safely
-try {
-  // Prefer explicit back placeholder if available; fall back to generic
-  phBack = (await getVariantPlaceholderByPos?.(blueprintId, printProviderId, parseInt(variantId), 'back'))
-        || (await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId)));
-  const containBack = clampContainScale({
-    Aw: phBack?.width, Ah: phBack?.height,
-    Iw: uploadedBack?.width, Ih: uploadedBack?.height,
-    requested: bS
-  });
-  bS = Math.max(0, Math.min(1, containBack * BACK_SCALE_MULT));
-} catch (e) {
-  bS = Math.max(0, Math.min(1, bS * BACK_SCALE_MULT));
-}
-// Debug: back scale decision (guard for undefined)
-console.log(
-  '[BATCH] back placeholder',
-  phBack?.width, 'x', phBack?.height,
-  'uploaded', uploadedBack?.width, 'x', uploadedBack?.height,
-  'requested', px(backPosition?.scale, 1), '→ final', bS
-);
-
-
+      const BACK_SCALE_MULT = Number(process.env.BACK_SCALE_MULT || 1.0);
+      let bS = px(backPosition?.scale, 1);
+      let phBack;
+      try {
+        phBack = (await getVariantPlaceholderByPos?.(blueprintId, printProviderId, parseInt(variantId), 'back'))
+              || (await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId)));
+        const containBack = clampContainScale({
+          Aw: phBack?.width, Ah: phBack?.height,
+          Iw: uploadedBack?.width, Ih: uploadedBack?.height,
+          requested: bS
+        });
+        bS = Math.max(0, Math.min(1, containBack * BACK_SCALE_MULT));
+      } catch (e) {
+        bS = Math.max(0, Math.min(1, bS * BACK_SCALE_MULT));
+      }
+      console.log(
+        '[BATCH] back placeholder',
+        phBack?.width, 'x', phBack?.height,
+        'uploaded', uploadedBack?.width, 'x', uploadedBack?.height,
+        'requested', px(backPosition?.scale, 1), '→ final', bS
+      );
 
       files.push({
         placement: 'back',
@@ -898,7 +821,7 @@ console.log(
       }];
     }
 
-    // --- NEW: normalize outgoing placements to provider spec (batch item) ---
+    // Normalize outgoing placements to provider spec (batch item)
     try {
       const provided = {};
       if (print_areas?.front?.[0]) provided.front = print_areas.front[0];
