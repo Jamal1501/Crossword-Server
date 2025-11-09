@@ -343,6 +343,89 @@ export async function uploadImageFromBase64(base64Image) {
 /* --------------------------
    Product preview updaters — canonical + sanitized
 --------------------------- */
+// Cache one tiny transparent upload so we don't hammer uploads
+let __shimImageId = null;
+async function getTransparentShimId() {
+  if (__shimImageId) return __shimImageId;
+  const up = await uploadImageFromBase64(tinyTransparentPngBase64());
+  __shimImageId = up?.id;
+  return __shimImageId;
+}
+
+// Find required positions with strong fallbacks (provider → variant → ['front'])
+async function requiredPositions(blueprintId, printProviderId, variantId) {
+  let req = await fetchRequiredPlacements(blueprintId, printProviderId); // may 404
+  if (!Array.isArray(req) || !req.length || (req.length === 1 && req[0] === 'front')) {
+    try {
+      const names = await getVariantPlaceholderNames(blueprintId, printProviderId, variantId);
+      if (Array.isArray(names) && names.length) req = names;
+    } catch (_) {}
+  }
+  if (!Array.isArray(req) || !req.length) req = ['front'];
+  // normalize
+  return req.map(s => (s === 'rear' || s === 'reverse') ? 'back' : s);
+}
+
+// Build the *canonical* area for the selected variant: every required position present.
+// If a position has no provided art, attach the transparent shim so `images` is non-empty.
+async function canonicalAreaForVariant({
+  blueprintId,
+  printProviderId,
+  variantId,
+  frontImageId,
+  backImageId,
+  frontPlacement = { x: 0.5, y: 0.5, scale: 1, angle: 0 },
+  backPlacement  = { x: 0.5, y: 0.5, scale: 1, angle: 0 }
+}) {
+  const need = await requiredPositions(blueprintId, printProviderId, variantId);
+  const shimId = await getTransparentShimId();
+
+  const placeholders = need.map(pos => {
+    if (pos === 'back' && backImageId) {
+      return {
+        position: 'back',
+        images: [{
+          id: backImageId,
+          x: backPlacement.x, y: backPlacement.y,
+          scale: backPlacement.scale, angle: backPlacement.angle
+        }]
+      };
+    }
+    if (pos === 'front' && frontImageId) {
+      return {
+        position: 'front',
+        images: [{
+          id: frontImageId,
+          x: frontPlacement.x, y: frontPlacement.y,
+          scale: frontPlacement.scale, angle: frontPlacement.angle
+        }]
+      };
+    }
+    // required but missing → shim to keep images non-empty
+    return {
+      position: pos,
+      images: [{
+        id: shimId, x: 0.5, y: 0.5, scale: 0.001, angle: 0
+      }]
+    };
+  });
+
+  return [{
+    variant_ids: [Number(variantId)],
+    placeholders
+  }];
+}
+
+// Build one blank area that covers all *other* variants with required placeholders and images:[]
+async function blankAreaForVariants(blueprintId, printProviderId, exampleVariantId, variantIds) {
+  if (!variantIds.length) return [];
+  const need = await requiredPositions(blueprintId, printProviderId, exampleVariantId);
+  const placeholders = need.map(pos => ({ position: pos, images: [] }));
+  return [{
+    variant_ids: variantIds.map(Number),
+    placeholders
+  }];
+}
 
 // Canonical placeholder builders to avoid zombie structures
 function buildPlaceholder(position, imageId, placement) {
@@ -416,7 +499,6 @@ function sanitizeAreasKeepSiblings(areas) {
   }));
 }
 
-// === applyImageToProduct (single-side) ===
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   const product = await safeFetch(url, { headers: authHeaders() });
@@ -425,21 +507,19 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
   const allVariantIds = (product?.variants || []).map(v => Number(v.id));
   const remaining = allVariantIds.filter(id => id !== vId);
 
-  // canonical area for the selected variant (provider-required positions)
-  const canonicalArea = await canonicalAreaForVariant({
+  const canonical = await canonicalAreaForVariant({
     blueprintId: product.blueprint_id,
     printProviderId: product.print_provider_id,
     variantId: vId,
     frontImageId: uploadedImageId,
     backImageId: null,
-    frontPlacement: placement,
-    backPlacement: null
+    frontPlacement: placement
   });
 
-  // blank coverage for every other variant
   const blanks = await blankAreaForVariants(
     product.blueprint_id,
     product.print_provider_id,
+    vId,
     remaining
   );
 
@@ -449,8 +529,8 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    // IMPORTANT: send ONLY our canonical + blank areas (no stale zombie structures)
-    print_areas: [...blanks, ...canonicalArea]
+    // send exactly what we want: blank coverage + canonical selected
+    print_areas: [...blanks, ...canonical]
   };
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
@@ -462,7 +542,6 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
 }
 
 
-// === applyImagesToProductDual (front+back) ===
 export async function applyImagesToProductDual(
   productId,
   variantId,
@@ -478,7 +557,7 @@ export async function applyImagesToProductDual(
   const allVariantIds = (product?.variants || []).map(v => Number(v.id));
   const remaining = allVariantIds.filter(id => id !== vId);
 
-  const canonicalArea = await canonicalAreaForVariant({
+  const canonical = await canonicalAreaForVariant({
     blueprintId: product.blueprint_id,
     printProviderId: product.print_provider_id,
     variantId: vId,
@@ -491,6 +570,7 @@ export async function applyImagesToProductDual(
   const blanks = await blankAreaForVariants(
     product.blueprint_id,
     product.print_provider_id,
+    vId,
     remaining
   );
 
@@ -500,7 +580,7 @@ export async function applyImagesToProductDual(
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    print_areas: [...blanks, ...canonicalArea]
+    print_areas: [...blanks, ...canonical]
   };
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
