@@ -341,8 +341,9 @@ export async function uploadImageFromBase64(base64Image) {
 }
 
 /* --------------------------
-   Product preview updaters — canonical + sanitized
+   Product preview updaters — canonical + sanitized (FIXED: no duplicate fns)
 --------------------------- */
+
 // Cache one tiny transparent upload so we don't hammer uploads
 let __shimImageId = null;
 async function getTransparentShimId() {
@@ -354,80 +355,22 @@ async function getTransparentShimId() {
 
 // Find required positions with strong fallbacks (provider → variant → ['front'])
 async function requiredPositions(blueprintId, printProviderId, variantId) {
-  let req = await fetchRequiredPlacements(blueprintId, printProviderId); // may 404
+  let req = [];
+  try {
+    req = await fetchRequiredPlacements(blueprintId, printProviderId); // may 404
+  } catch {}
   if (!Array.isArray(req) || !req.length || (req.length === 1 && req[0] === 'front')) {
     try {
       const names = await getVariantPlaceholderNames(blueprintId, printProviderId, variantId);
       if (Array.isArray(names) && names.length) req = names;
-    } catch (_) {}
+    } catch {}
   }
   if (!Array.isArray(req) || !req.length) req = ['front'];
   // normalize
   return req.map(s => (s === 'rear' || s === 'reverse') ? 'back' : s);
 }
 
-// Build the *canonical* area for the selected variant: every required position present.
-// If a position has no provided art, attach the transparent shim so `images` is non-empty.
-async function canonicalAreaForVariant({
-  blueprintId,
-  printProviderId,
-  variantId,
-  frontImageId,
-  backImageId,
-  frontPlacement = { x: 0.5, y: 0.5, scale: 1, angle: 0 },
-  backPlacement  = { x: 0.5, y: 0.5, scale: 1, angle: 0 }
-}) {
-  const need = await requiredPositions(blueprintId, printProviderId, variantId);
-  const shimId = await getTransparentShimId();
-
-  const placeholders = need.map(pos => {
-    if (pos === 'back' && backImageId) {
-      return {
-        position: 'back',
-        images: [{
-          id: backImageId,
-          x: backPlacement.x, y: backPlacement.y,
-          scale: backPlacement.scale, angle: backPlacement.angle
-        }]
-      };
-    }
-    if (pos === 'front' && frontImageId) {
-      return {
-        position: 'front',
-        images: [{
-          id: frontImageId,
-          x: frontPlacement.x, y: frontPlacement.y,
-          scale: frontPlacement.scale, angle: frontPlacement.angle
-        }]
-      };
-    }
-    // required but missing → shim to keep images non-empty
-    return {
-      position: pos,
-      images: [{
-        id: shimId, x: 0.5, y: 0.5, scale: 0.001, angle: 0
-      }]
-    };
-  });
-
-  return [{
-    variant_ids: [Number(variantId)],
-    placeholders
-  }];
-}
-
-// Build one blank area that covers all *other* variants with required placeholders and images:[]
-async function blankAreaForVariants(blueprintId, printProviderId, exampleVariantId, variantIds) {
-  if (!variantIds.length) return [];
-  const need = await requiredPositions(blueprintId, printProviderId, exampleVariantId);
-  const placeholders = need.map(pos => ({ position: pos, images: [] }));
-  return [{
-    variant_ids: variantIds.map(Number),
-    placeholders
-  }];
-}
-
-// Canonical placeholder builders to avoid zombie structures
+// Canonical placeholder builder (always returns an array in `images`)
 function buildPlaceholder(position, imageId, placement) {
   return {
     position,
@@ -437,26 +380,42 @@ function buildPlaceholder(position, imageId, placement) {
       y: placement?.y ?? 0.5,
       scale: placement?.scale ?? 1,
       angle: placement?.angle ?? 0
-    }] : [] // IMPORTANT: always an array (even when empty)
+    }] : []
   };
 }
 
-// Strict, provider-aware area for exactly one variant
+/**
+ * Build the *canonical* area for the selected variant:
+ * - every required position present
+ * - uses provided front/back images if given
+ * - otherwise attaches a 1×1 transparent shim so `images` is non-empty
+ */
 async function canonicalAreaForVariant({
   blueprintId,
   printProviderId,
   variantId,
   frontImageId,
   backImageId,
-  frontPlacement,
-  backPlacement
+  frontPlacement = { x: 0.5, y: 0.5, scale: 1, angle: 0 },
+  backPlacement  = null
 }) {
-  const required = await fetchRequiredPlacements(blueprintId, printProviderId); // e.g. ["front"] or ["front","back"]
+  const need = await requiredPositions(blueprintId, printProviderId, variantId);
+  const shimId = await getTransparentShimId();
+  const bp = backPlacement || frontPlacement;
 
-  const placeholders = required.map(pos => {
-    if (pos === 'front') return buildPlaceholder('front', frontImageId, frontPlacement);
-    if (pos === 'back')  return buildPlaceholder('back',  backImageId,  backPlacement ?? frontPlacement);
-    return buildPlaceholder(pos, null, null); // unknown/unused positions → empty images array (valid)
+  const placeholders = need.map(pos => {
+    if (pos === 'front') {
+      return frontImageId
+        ? buildPlaceholder('front', frontImageId, frontPlacement)
+        : buildPlaceholder('front', shimId, { x: 0.5, y: 0.5, scale: 0.001, angle: 0 });
+    }
+    if (pos === 'back') {
+      return backImageId
+        ? buildPlaceholder('back', backImageId, bp)
+        : buildPlaceholder('back', shimId, { x: 0.5, y: 0.5, scale: 0.001, angle: 0 });
+    }
+    // unknown/extra required positions → shim
+    return buildPlaceholder(pos, shimId, { x: 0.5, y: 0.5, scale: 0.001, angle: 0 });
   });
 
   return [{
@@ -465,39 +424,41 @@ async function canonicalAreaForVariant({
   }];
 }
 
-// Build a blank area that covers a list of variants with provider-required placeholders (no images)
-async function blankAreaForVariants(blueprintId, printProviderId, variantIds) {
-  if (!variantIds.length) return [];
-  // Try provider spec; if 404, try variant placeholder names; fallback to ['front']
-  let required = await fetchRequiredPlacements(blueprintId, printProviderId);
-  if (!required || required.length === 1 && required[0] === 'front') {
-    try {
-      // probe first variant for declared positions
-      const names = await getVariantPlaceholderNames(blueprintId, printProviderId, variantIds[0]);
-      if (Array.isArray(names) && names.length) required = names;
-    } catch (_) { /* ignore */ }
-  }
-  if (!Array.isArray(required) || !required.length) required = ['front'];
+/**
+ * Build one *blank* area that covers all *other* variants:
+ * - all required positions present
+ * - `images: []` for each placeholder (explicitly empty is valid)
+ */
+async function blankAreaForVariants(blueprintId, printProviderId, exampleVariantId, variantIds) {
+  if (!Array.isArray(variantIds) || variantIds.length === 0) return [];
+  let need = [];
+  try {
+    need = await requiredPositions(blueprintId, printProviderId, exampleVariantId);
+  } catch {}
+  if (!Array.isArray(need) || !need.length) need = ['front'];
 
-  const placeholders = required.map(pos => ({ position: pos, images: [] }));
+  const placeholders = need.map(pos => ({ position: pos, images: [] }));
   return [{
     variant_ids: variantIds.map(Number),
     placeholders
   }];
 }
 
-
-// Keep siblings but guarantee valid shape
+// Keep siblings but guarantee valid shape (useful if you ever want to merge instead of replace)
 function sanitizeAreasKeepSiblings(areas) {
   const arr = Array.isArray(areas) ? areas : [];
   return arr.map(a => ({
     ...a,
     placeholders: (a?.placeholders || []).map(ph => ({
       position: ph?.position || 'front',
-      images: Array.isArray(ph?.images) ? ph.images : [] // <= critical
+      images: Array.isArray(ph?.images) ? ph.images : []
     }))
   }));
 }
+
+/* --------------------------
+   PUT preview helpers that satisfy Printify validators (8251/8150)
+--------------------------- */
 
 export async function applyImageToProduct(productId, variantId, uploadedImageId, placement) {
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
@@ -529,7 +490,7 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    // send exactly what we want: blank coverage + canonical selected
+    // exact coverage: all others blank + selected canonical
     print_areas: [...blanks, ...canonical]
   };
 
@@ -540,7 +501,6 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     body: JSON.stringify(payload)
   });
 }
-
 
 export async function applyImagesToProductDual(
   productId,
@@ -592,15 +552,11 @@ export async function applyImagesToProductDual(
 }
 
 export async function fetchProduct(productId) {
-  if (!productId) {
-    throw new Error("Missing productId");
-  }
+  if (!productId) throw new Error("Missing productId");
   const url = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
-  return safeFetch(url, {
-    method: 'GET',
-    headers: authHeaders(),
-  });
+  return safeFetch(url, { method: 'GET', headers: authHeaders() });
 }
+
 
 /* --------------------------
    Order creation (front/back) — include BOTH files[] and print_areas
