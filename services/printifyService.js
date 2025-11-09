@@ -4,6 +4,7 @@ import fetch from 'node-fetch';
 const BASE_URL = 'https://api.printify.com/v1';
 const { PRINTIFY_API_KEY, PRINTIFY_SHOP_ID } = process.env;
 const SHOP_ID = process.env.PRINTIFY_SHOP_ID;
+const SHIM_IMAGE_ID = process.env.PRINTIFY_SHIM_IMAGE_ID || null;
 
 const PIFY_HEADERS = {
   Authorization: `Bearer ${process.env.PRINTIFY_API_KEY}`,
@@ -344,21 +345,19 @@ export async function uploadImageFromBase64(base64Image) {
    Product preview updaters — canonical + sanitized (FIXED: no duplicate fns)
 --------------------------- */
 
-// Cache one tiny transparent upload so we don't hammer uploads
-let __shimImageId = null;
+// ---------- SHIM HANDLING (no uploads during preview) ----------
+let __shimImageId = SHIM_IMAGE_ID || null;
+
 async function getTransparentShimId() {
-  if (__shimImageId) return __shimImageId;
-  const up = await uploadImageFromBase64(tinyTransparentPngBase64());
-  __shimImageId = up?.id;
+  // If you’ve pre-uploaded a blank to Printify, put its ID into PRINTIFY_SHIM_IMAGE_ID
+  // and we’ll just use it. Otherwise we return null to avoid API uploads.
   return __shimImageId;
 }
 
-// Find required positions with strong fallbacks (provider → variant → ['front'])
+// Resolve required positions with strong fallbacks
 async function requiredPositions(blueprintId, printProviderId, variantId) {
   let req = [];
-  try {
-    req = await fetchRequiredPlacements(blueprintId, printProviderId); // may 404
-  } catch {}
+  try { req = await fetchRequiredPlacements(blueprintId, printProviderId); } catch {}
   if (!Array.isArray(req) || !req.length || (req.length === 1 && req[0] === 'front')) {
     try {
       const names = await getVariantPlaceholderNames(blueprintId, printProviderId, variantId);
@@ -366,11 +365,9 @@ async function requiredPositions(blueprintId, printProviderId, variantId) {
     } catch {}
   }
   if (!Array.isArray(req) || !req.length) req = ['front'];
-  // normalize
   return req.map(s => (s === 'rear' || s === 'reverse') ? 'back' : s);
 }
 
-// Canonical placeholder builder (always returns an array in `images`)
 function buildPlaceholder(position, imageId, placement) {
   return {
     position,
@@ -384,12 +381,9 @@ function buildPlaceholder(position, imageId, placement) {
   };
 }
 
-/**
- * Build the *canonical* area for the selected variant:
- * - every required position present
- * - uses provided front/back images if given
- * - otherwise attaches a 1×1 transparent shim so `images` is non-empty
- */
+// Canonical area for a single variant:
+// - If a required side has no art, prefer SHIM_IMAGE_ID;
+// - If no shim, duplicate the FRONT image at tiny scale to satisfy "images required".
 async function canonicalAreaForVariant({
   blueprintId,
   printProviderId,
@@ -405,44 +399,40 @@ async function canonicalAreaForVariant({
 
   const placeholders = need.map(pos => {
     if (pos === 'front') {
-      return frontImageId
-        ? buildPlaceholder('front', frontImageId, frontPlacement)
-        : buildPlaceholder('front', shimId, { x: 0.5, y: 0.5, scale: 0.001, angle: 0 });
+      if (frontImageId) return buildPlaceholder('front', frontImageId, frontPlacement);
+      if (shimId)       return buildPlaceholder('front', shimId, { x:0.5,y:0.5,scale:0.001,angle:0 });
+      // last resort: no shim? duplicate back (if present)
+      if (backImageId)  return buildPlaceholder('front', backImageId, { x:0.5,y:0.5,scale:0.001,angle:0 });
+      return buildPlaceholder('front', null, null); // will still fail validator if provider truly requires it
     }
     if (pos === 'back') {
-      return backImageId
-        ? buildPlaceholder('back', backImageId, bp)
-        : buildPlaceholder('back', shimId, { x: 0.5, y: 0.5, scale: 0.001, angle: 0 });
+      if (backImageId)  return buildPlaceholder('back', backImageId, bp);
+      if (shimId)       return buildPlaceholder('back', shimId, { x:0.5,y:0.5,scale:0.001,angle:0 });
+      // last resort: duplicate front as shim so images[] is non-empty
+      if (frontImageId) return buildPlaceholder('back', frontImageId, { x:0.5,y:0.5,scale:0.001,angle:0 });
+      return buildPlaceholder('back', null, null);
     }
-    // unknown/extra required positions → shim
-    return buildPlaceholder(pos, shimId, { x: 0.5, y: 0.5, scale: 0.001, angle: 0 });
+    // unknown/extra required positions
+    if (shimId) return buildPlaceholder(pos, shimId, { x:0.5,y:0.5,scale:0.001,angle:0 });
+    // duplicate front if we have it; else leave empty (validator may not care about extra pos)
+    if (frontImageId) return buildPlaceholder(pos, frontImageId, { x:0.5,y:0.5,scale:0.001,angle:0 });
+    return buildPlaceholder(pos, null, null);
   });
 
-  return [{
-    variant_ids: [Number(variantId)],
-    placeholders
-  }];
+  return [{ variant_ids: [Number(variantId)], placeholders }];
 }
 
-/**
- * Build one *blank* area that covers all *other* variants:
- * - all required positions present
- * - `images: []` for each placeholder (explicitly empty is valid)
- */
 async function blankAreaForVariants(blueprintId, printProviderId, exampleVariantId, variantIds) {
-  if (!Array.isArray(variantIds) || variantIds.length === 0) return [];
+  if (!Array.isArray(variantIds) || !variantIds.length) return [];
   let need = [];
-  try {
-    need = await requiredPositions(blueprintId, printProviderId, exampleVariantId);
-  } catch {}
+  try { need = await requiredPositions(blueprintId, printProviderId, exampleVariantId); } catch {}
   if (!Array.isArray(need) || !need.length) need = ['front'];
-
-  const placeholders = need.map(pos => ({ position: pos, images: [] }));
   return [{
     variant_ids: variantIds.map(Number),
-    placeholders
+    placeholders: need.map(pos => ({ position: pos, images: [] }))
   }];
 }
+
 
 // Keep siblings but guarantee valid shape (useful if you ever want to merge instead of replace)
 function sanitizeAreasKeepSiblings(areas) {
