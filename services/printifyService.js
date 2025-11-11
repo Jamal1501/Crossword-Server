@@ -424,14 +424,36 @@ async function canonicalAreaForVariant({
 
 async function blankAreaForVariants(blueprintId, printProviderId, exampleVariantId, variantIds) {
   if (!Array.isArray(variantIds) || !variantIds.length) return [];
+
   let need = [];
-  try { need = await requiredPositions(blueprintId, printProviderId, exampleVariantId); } catch {}
-  if (!Array.isArray(need) || !need.length) need = ['front'];
-  return [{
-    variant_ids: variantIds.map(Number),
-    placeholders: need.map(pos => ({ position: pos, images: [] }))
-  }];
+  try {
+    need = await requiredPositions(blueprintId, printProviderId, exampleVariantId);
+  } catch (e) {
+    // ignore, we’ll fall back
+  }
+  if (!Array.isArray(need) || !need.length) {
+    need = ['front'];
+  }
+
+  const shimId = await getTransparentShimId();
+
+  // If we have a shim: use it at tiny scale so validators are happy.
+  if (shimId) {
+    const placeholders = need.map(pos =>
+      buildPlaceholder(pos, shimId, { x: 0.5, y: 0.5, scale: 0.001, angle: 0 })
+    );
+
+    return [{
+      variant_ids: variantIds.map(Number),
+      placeholders
+    }];
+  }
+
+  // If no shim: DO NOT send empty placeholders.
+  // Let Printify keep existing/default mockups for sibling variants.
+  return [];
 }
+
 
 
 // Keep siblings but guarantee valid shape (useful if you ever want to merge instead of replace)
