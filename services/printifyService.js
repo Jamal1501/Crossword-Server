@@ -349,10 +349,29 @@ export async function uploadImageFromBase64(base64Image) {
 let __shimImageId = SHIM_IMAGE_ID || null;
 
 async function getTransparentShimId() {
-  // If you’ve pre-uploaded a blank to Printify, put its ID into PRINTIFY_SHIM_IMAGE_ID
-  // and we’ll just use it. Otherwise we return null to avoid API uploads.
-  return __shimImageId;
+  if (__shimImageId) return __shimImageId;
+
+  if (SHIM_IMAGE_ID) {
+    __shimImageId = SHIM_IMAGE_ID;
+    return __shimImageId;
+  }
+
+  // Auto-upload 1x1 transparent shim once
+  try {
+    const uploaded = await uploadImageFromBase64(tinyTransparentPngBase64());
+    if (uploaded?.id) {
+      __shimImageId = uploaded.id;
+      console.log('🫥 Created transparent shim on Printify:', __shimImageId);
+      return __shimImageId;
+    }
+    console.warn('⚠️ Shim upload returned no id');
+  } catch (e) {
+    console.warn('⚠️ Unable to upload transparent shim image:', e.message || e);
+  }
+
+  return null;
 }
+
 
 // Resolve required positions with strong fallbacks
 async function requiredPositions(blueprintId, printProviderId, variantId) {
@@ -496,15 +515,22 @@ export async function applyImageToProduct(productId, variantId, uploadedImageId,
     remaining
   );
 
+  let print_areas = [...blanks, ...canonical];
+
+  // Fallback: if we have no blanks (no shim), map ALL variants to the canonical area
+  if (!blanks.length && canonical.length === 1) {
+    print_areas[0].variant_ids = allVariantIds;
+  }
+
   const payload = {
     title: product.title,
     description: product.description,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    // exact coverage: all others blank + selected canonical
-    print_areas: [...blanks, ...canonical]
+    print_areas
   };
+
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   return safeFetch(updateUrl, {
@@ -546,14 +572,22 @@ export async function applyImagesToProductDual(
     remaining
   );
 
+  let print_areas = [...blanks, ...canonical];
+
+  if (!blanks.length && canonical.length === 1) {
+    const allVariantIds = (product?.variants || []).map(v => Number(v.id));
+    print_areas[0].variant_ids = allVariantIds;
+  }
+
   const payload = {
     title: product.title,
     description: product.description,
     blueprint_id: product.blueprint_id,
     print_provider_id: product.print_provider_id,
     variants: product.variants,
-    print_areas: [...blanks, ...canonical]
+    print_areas
   };
+
 
   const updateUrl = `${BASE_URL}/shops/${PRINTIFY_SHOP_ID}/products/${productId}.json`;
   return safeFetch(updateUrl, {
