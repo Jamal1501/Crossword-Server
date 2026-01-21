@@ -1061,10 +1061,119 @@ app.get('/products', async (req, res) => {
   }
 });
 
-// Printify-only product feed (no Shopify Admin; uses variantMap to link back)
+// ===== Theme -> Shopify collection handle mapping =====
+// Shopify collection handles you create in Admin, e.g. upsell-birthday
+const THEME_COLLECTION_HANDLE = (themeKey) => {
+  const key = String(themeKey || '').trim().toLowerCase();
+  if (!key || key === 'default') return null;
+  return `upsell-${key}`;
+};
+
+// Cache allowed variant IDs per theme (avoid Shopify API every request)
+const _themeVariantCache = new Map(); // themeKey -> { ts, variantIds: Set<string> | null }
+const THEME_CACHE_TTL_MS = 5 * 60 * 1000;
+
+// Admin GraphQL helper (basic auth)
+async function shopifyGraphQL(query, variables = {}) {
+  const store = process.env.SHOPIFY_STORE;
+  const apiKey = process.env.SHOPIFY_API_KEY;
+  const password = process.env.SHOPIFY_PASSWORD;
+
+  if (!store || !apiKey || !password) {
+    throw new Error('Missing Shopify envs: SHOPIFY_STORE / SHOPIFY_API_KEY / SHOPIFY_PASSWORD');
+  }
+
+  const url = `https://${store}/admin/api/2024-04/graphql.json`;
+  const auth = Buffer.from(`${apiKey}:${password}`).toString('base64');
+
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Basic ${auth}`
+    },
+    body: JSON.stringify({ query, variables })
+  });
+
+  const json = await r.json();
+  if (!r.ok || json.errors) {
+    throw new Error(`Shopify GraphQL error: ${JSON.stringify(json.errors || json)}`);
+  }
+  return json.data;
+}
+
+/**
+ * Returns:
+ * - null => "no filtering" (show all products)
+ * - Set<string> => allowed Shopify variant IDs for this theme
+ *
+ * IMPORTANT: If collection is missing or empty, we return null (show all),
+ * because you said you'd rather show all than none.
+ */
+async function getAllowedShopifyVariantIdsForTheme(themeKey) {
+  const handle = THEME_COLLECTION_HANDLE(themeKey);
+  if (!handle) return null; // default theme => no filtering
+
+  const cached = _themeVariantCache.get(themeKey);
+  if (cached && (Date.now() - cached.ts) < THEME_CACHE_TTL_MS) {
+    return cached.variantIds; // may be null
+  }
+
+  const query = `
+    query($handle: String!) {
+      collectionByHandle(handle: $handle) {
+        id
+        products(first: 250) {
+          edges {
+            node {
+              variants(first: 250) {
+                edges { node { legacyResourceId } }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const data = await shopifyGraphQL(query, { handle });
+  const c = data?.collectionByHandle;
+
+  // Collection missing => fallback to ALL products (no filtering)
+  if (!c) {
+    console.warn(`ℹ️ Theme collection not found: ${handle} -> showing ALL products (no filtering)`);
+    _themeVariantCache.set(themeKey, { ts: Date.now(), variantIds: null });
+    return null;
+  }
+
+  const set = new Set();
+  const pEdges = c?.products?.edges || [];
+  for (const pEdge of pEdges) {
+    const vEdges = pEdge?.node?.variants?.edges || [];
+    for (const vEdge of vEdges) {
+      const id = vEdge?.node?.legacyResourceId;
+      if (id) set.add(String(id));
+    }
+  }
+
+  // Empty collection => fallback to ALL products (no filtering)
+  if (set.size === 0) {
+    console.warn(`ℹ️ Theme collection empty: ${handle} -> showing ALL products (no filtering)`);
+    _themeVariantCache.set(themeKey, { ts: Date.now(), variantIds: null });
+    return null;
+  }
+
+  _themeVariantCache.set(themeKey, { ts: Date.now(), variantIds: set });
+  return set;
+}
+
+// Printify-only product feed (uses variantMap to link back)
 app.get('/apps/crossword/products', async (req, res) => {
   try {
     const DEFAULT_AREA = { width: 800, height: 500, top: 50, left: 50 };
+
+    const themeKey = String(req.query.theme || 'default');
+    const allowedShopifyVariantIds = await getAllowedShopifyVariantIdsForTheme(themeKey);
 
     // 0) Reverse variantMap: printifyVid -> [shopifyVid...]
     const rev = {};
@@ -1080,16 +1189,28 @@ app.get('/apps/crossword/products', async (req, res) => {
     const out = [];
     for (const p of pifyProducts) {
       const img = (p.images && p.images[0]?.src) || '';
-      const mappedVariants = (p.variants || []).filter(v => rev[String(v.id)] && rev[String(v.id)][0]);
-      if (!mappedVariants.length) continue; // skip products we can’t sell (no Shopify mapping)
+
+      // mapped variants only
+      let mappedVariants = (p.variants || []).filter(v => rev[String(v.id)] && rev[String(v.id)][0]);
+
+      // Theme filtering: keep only variants whose Shopify variant ID is in the theme collection
+      // If allowedShopifyVariantIds is null => no filtering (show all mapped variants)
+      if (allowedShopifyVariantIds) {
+        mappedVariants = mappedVariants.filter(v => {
+          const shopVid = rev[String(v.id)]?.[0];
+          return shopVid && allowedShopifyVariantIds.has(String(shopVid));
+        });
+      }
+
+      if (!mappedVariants.length) continue; // nothing sellable (or nothing allowed)
 
       // pick a preferred mapped variant
       const pref = mappedVariants[0];
       const firstShopifyVid = rev[String(pref.id)][0];
 
-      // build UI variants (only mapped)
+      // build UI variants (only mapped / allowed)
       const variantList = mappedVariants.map(v => {
-        const shopVid = rev[String(v.id)][0]; // take the first mapping
+        const shopVid = rev[String(v.id)][0];
         return {
           title: v.title || '',
           shopifyVariantId: shopVid,
@@ -1115,9 +1236,9 @@ app.get('/apps/crossword/products', async (req, res) => {
       });
 
       out.push({
-        id: p.id,                          // Printify product id
-        printifyVariantId: pref.id,        // default Printify variant
-        variants: variantList,             // mapped only
+        id: p.id,
+        printifyVariantId: pref.id,
+        variants: variantList,
         title: p.title,
         optionNames: [],
         handle: '',
@@ -1133,10 +1254,11 @@ app.get('/apps/crossword/products', async (req, res) => {
 
     res.json({ products: out });
   } catch (err) {
-    console.error('❌ products(Printify-only) failed:', err);
+    console.error('❌ /apps/crossword/products failed:', err);
     res.status(500).json({ error: 'Failed to load products', details: err.message });
   }
 });
+
 
 
 app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
