@@ -1075,22 +1075,19 @@ const THEME_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Admin GraphQL helper (basic auth)
 async function shopifyGraphQL(query, variables = {}) {
-  const store = process.env.SHOPIFY_STORE;
-  const apiKey = process.env.SHOPIFY_API_KEY;
-  const password = process.env.SHOPIFY_PASSWORD;
+  const store = process.env.SHOPIFY_STORE; // e.g. bad1x2-nm.myshopify.com
+  const token = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN;
 
-  if (!store || !apiKey || !password) {
-    throw new Error('Missing Shopify envs: SHOPIFY_STORE / SHOPIFY_API_KEY / SHOPIFY_PASSWORD');
-  }
+  if (!store) throw new Error('Missing SHOPIFY_STORE env (must be *.myshopify.com)');
+  if (!token) throw new Error('Missing SHOPIFY_ADMIN_ACCESS_TOKEN env');
 
   const url = `https://${store}/admin/api/2024-04/graphql.json`;
-  const auth = Buffer.from(`${apiKey}:${password}`).toString('base64');
 
   const r = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Basic ${auth}`
+      'X-Shopify-Access-Token': token
     },
     body: JSON.stringify({ query, variables })
   });
