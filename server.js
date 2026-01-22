@@ -2359,4 +2359,3 @@ app.get('/debug/paid-puzzles', (req, res) => {
   res.json({ count: puzzles.length, puzzles });
 });
 
-export default app;
