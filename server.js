@@ -1892,6 +1892,11 @@ app.all('/preview-pdf', async (req, res) => {
     const cluesUrl   = String(payload.cluesUrl || '');
     const cluesText  = String(payload.cluesText || '').trim();
     const scale      = Number(payload.scale || 1) || 1;
+    const themeKey =
+  String(payload.themeKey || payload.theme || payload.theme_key || 'default')
+    .trim()
+    .toLowerCase() || 'default';
+    const themeKey   = String(payload.themeKey || payload.theme || payload._theme || '').trim();
     const watermark  = String(payload.watermark ?? '1') !== '0'; // default: show PREVIEW
 
     if (!imageUrl) return res.status(400).send('Missing imageUrl');
@@ -1908,7 +1913,7 @@ app.all('/preview-pdf', async (req, res) => {
       cluesBuf: cluesBuf || undefined,
       cluesText,                 // prefer text typesetting for preview too
       puzzleId: 'PREVIEW',
-      opts: { scale }
+      opts: { scale, themeKey }
     });
 
     // Optional: overlay tiled/small watermark without affecting layout
