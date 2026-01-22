@@ -1919,7 +1919,7 @@ app.all('/preview-pdf', async (req, res) => {
       // --- Tweak these if you want ---
       const WM_TEXT   = 'LOVEFRAMES';
       const WM_SIZE   = 14;     // small text size
-      const WM_OPAC   = 0.18;   // subtle opacity
+      const WM_OPAC   = 0.28;   // subtle opacity
       const WM_ANGLE  = 30;     // degrees
       const STEP_X    = 140;    // horizontal spacing between repeats
       const STEP_Y    = 110;    // vertical spacing between repeats
