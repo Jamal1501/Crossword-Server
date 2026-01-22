@@ -962,11 +962,16 @@ try {
     console.log(`📧 Sent ONE links email with ${links.length} download link(s) to ${to}`);
   }
 } catch (e) {
-  console.error('❌ multi-pdf email delivery failed:', e);
+    console.error('❌ multi-pdf email delivery failed:', e);
+  }
+
+  return res.status(200).send('Webhook received');
+  
+} catch (err) {  // This closes the outer try block that starts around line 289
+  console.error('Error processing webhook:', err);
+  return res.status(500).send('Webhook processing failed');
 }
-
-return res.status(200).send('Webhook received');
-
+});  // This closes app.post('/webhooks/orders/create'
 
 // ── Cloudinary config ───────────────────────────────────────────────
 cloudinary.config({
@@ -2359,3 +2364,4 @@ app.get('/debug/paid-puzzles', (req, res) => {
   res.json({ count: puzzles.length, puzzles });
 });
 
+export default app;
