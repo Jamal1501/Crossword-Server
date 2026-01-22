@@ -51,6 +51,7 @@ const { createOrderBatch } = printifyService;
 const app = express();
 
 // --- CORS & parsers (run BEFORE routes) ---
+app.set('trust proxy', 1);
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use((req, res, next) => { res.setHeader('Vary', 'Origin'); next(); });
@@ -157,8 +158,48 @@ function issuePdfToken(puzzleId, orderId) {
 }
 
 function verifyPdfToken(puzzleId, orderId, token) {
-  return token && token === issuePdfToken(puzzleId, orderId);
+  if (!token || !puzzleId || !orderId) return false;
+
+  const expected = issuePdfToken(String(puzzleId), String(orderId));
+
+  try {
+    const a = Buffer.from(String(token), 'hex');
+    const b = Buffer.from(String(expected), 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
+
+
+// ===== PDF Background per Theme =====
+// Fallback: PDF_BRAND_BG_URL
+// Optional mapping: PDF_BG_BY_THEME_JSON='{"default":"https://...","birthday":"https://..."}'
+function getPdfBgUrlForTheme(themeKey) {
+  const fallback = process.env.PDF_BRAND_BG_URL || '';
+  const key = String(themeKey || 'default').trim().toLowerCase() || 'default';
+
+  try {
+    const raw = process.env.PDF_BG_BY_THEME_JSON || '';
+    if (!raw) return fallback;
+
+    const map = JSON.parse(raw);
+    if (map && typeof map === 'object') {
+      return String(map[key] || map.default || fallback || '');
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+// Build a public base URL that works behind proxies (Render/Cloudflare/etc.)
+function getPublicBaseUrl(req) {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+  const host = (req.headers['x-forwarded-host'] || req.get('host') || '').split(',')[0].trim();
+  return `${proto}://${host}`;
+}
+
 
 // ---- Email + PDF helpers (updated + new) ----
 async function fetchBuf(url) {
@@ -205,7 +246,9 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleI
 
   const pdf = await PDFDocument.create();
   const { logoImg, font } = await prepareBrandAssets(pdf);
-  const bgUrl = process.env.PDF_BRAND_BG_URL || '';
+const bgUrl = (opts && opts.bgUrl)
+  ? String(opts.bgUrl)
+  : getPdfBgUrlForTheme(opts?.themeKey);
   const approxWidth = (s, size, fnt) => (fnt ? fnt.widthOfTextAtSize(s, size) : s.length * size * 0.55);
   const useFont = font || await pdf.embedFont(StandardFonts.Helvetica);
 
@@ -373,12 +416,11 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleI
   return Buffer.from(await pdf.save());
 }
 
-
-// Generic email sender for any PDF attachment (Resend)
-async function sendEmailWithAttachment({ to, subject, html, filename, pdfBuffer }) {
+async function sendEmailViaResend({ to, subject, html, attachments = [] }) {
   if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
     throw new Error('Missing RESEND_API_KEY or EMAIL_FROM');
   }
+
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -390,17 +432,28 @@ async function sendEmailWithAttachment({ to, subject, html, filename, pdfBuffer 
       to: [to],
       subject,
       html,
-      attachments: [{
-        filename,
-        content: pdfBuffer.toString('base64')
-      }]
+      attachments
     })
   });
+
   if (!res.ok) {
-    const t = await res.text().catch(()=> '');
+    const t = await res.text().catch(() => '');
     throw new Error(`Resend failed: ${res.status} ${t}`);
   }
 }
+
+async function sendEmailWithAttachment({ to, subject, html, filename, pdfBuffer }) {
+  return sendEmailViaResend({
+    to,
+    subject,
+    html,
+    attachments: [{
+      filename,
+      content: pdfBuffer.toString('base64')
+    }]
+  });
+}
+
 
 // (Kept for compatibility—unused now unless you call it elsewhere)
 async function sendCluesEmail({ to, puzzleId, pdfBuffer }) {
@@ -666,19 +719,25 @@ app.post('/webhooks/orders/create', async (req, res) => {
       try {
         design_specs = design_specs_raw ? JSON.parse(design_specs_raw) : null;
       } catch {}
+      const themeKey =
+  (design_specs && (design_specs.themeKey || design_specs.theme || design_specs.theme_key))
+  || getProp('_theme')
+  || 'default';
       const explicitCluesText = getProp('_clues_text') || '';
       const cluesText = (design_specs && String(design_specs.clues_text || '').trim())
         || String(explicitCluesText || '').trim()
         || '';
 
-      PaidPuzzles.set(pid, {
-        orderId: String(order.id),
-        email: (order.email || order?.customer?.email || '') + '',
-        crosswordImage,
-        cluesImage,
-        cluesText,  // stored for text-typeset PDFs
-        when: new Date().toISOString(),
-      });
+PaidPuzzles.set(pid, {
+  orderId: String(order.id),
+  email: (order.email || order?.customer?.email || '') + '',
+  crosswordImage,
+  cluesImage,
+  cluesText,
+  themeKey, // ✅ NEW
+  when: new Date().toISOString(),
+});
+
 
       seen.push(pid);
     }
@@ -696,79 +755,122 @@ app.post('/webhooks/orders/create', async (req, res) => {
     // continue — we still want to attempt sending PDFs/emails
   }
 
-  // === Email: always send FULL PDF (grid + clues) to buyer, once per puzzle ===
-  try {
-    const to =
-      [order.email, order.contact_email, order?.customer?.email, process.env.EMAIL_FALLBACK_TO]
-        .map(e => (e || '').trim())
-        .find(e => e && e.includes('@')) || '';
+// === Email: deliver ALL PDFs for this order (ONE email), attachments <=3 else links ===
+try {
+  const to =
+    [order.email, order.contact_email, order?.customer?.email, process.env.EMAIL_FALLBACK_TO]
+      .map(e => (e || '').trim())
+      .find(e => e && e.includes('@')) || '';
 
-    if (!to) {
-      console.warn('No buyer email on order; skipping PDF email.');
-      return res.status(200).send('Webhook received (no email)');
+  if (!to) {
+    console.warn('No buyer email on order; skipping PDF email.');
+    return res.status(200).send('Webhook received (no email)');
+  }
+
+  const orderId = String(order?.id || '');
+  const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+
+  // 1) Collect unique puzzleIds in the order they appear (no guessing)
+  const deliverables = [];
+  const seen = new Set();
+
+  for (const li of lineItems) {
+    const props = Array.isArray(li.properties) ? li.properties : [];
+    const getProp = (name) => {
+      const p = props.find(x => x && x.name === name);
+      return p ? String(p.value || '') : '';
+    };
+
+    const pid = getProp('_puzzle_id');
+    if (!pid || seen.has(pid)) continue;
+    seen.add(pid);
+
+    // Prefer server-side record if available (more reliable)
+    const rec = (typeof PaidPuzzles !== 'undefined') ? PaidPuzzles.get(pid) : null;
+
+    // Fallback to line item properties if record missing
+    const gridUrl  = rec?.crosswordImage || getProp('_custom_image');
+    const cluesUrl = rec?.cluesImage || getProp('_clues_image_url');
+    const shopVid  = String(li.variant_id || '');
+    const themeKey =
+      rec?.themeKey
+      || (() => {
+        const raw = getProp('_design_specs') || '';
+        try {
+          const ds = raw ? JSON.parse(raw) : null;
+          return (ds && (ds.themeKey || ds.theme || ds.theme_key)) || getProp('_theme') || 'default';
+        } catch {
+          return getProp('_theme') || 'default';
+        }
+      })();
+
+    // clues text: prefer stored record, then design_specs.clues_text, then explicit _clues_text
+    const designSpecsRaw = getProp('_design_specs') || '';
+    let design_specs = null;
+    try { design_specs = designSpecsRaw ? JSON.parse(designSpecsRaw) : null; } catch { design_specs = null; }
+
+    const explicitCluesText = getProp('_clues_text') || '';
+    const cluesText =
+      (rec?.cluesText && String(rec.cluesText).trim())
+      || (design_specs && String(design_specs.clues_text || '').trim())
+      || String(explicitCluesText || '').trim()
+      || '';
+
+    // computed scale (keep your existing behavior)
+    let computedScale = 1;
+    try {
+      const area = printAreas?.[shopVid] || null;
+      let scale = 1.0;
+      const sizeVal = design_specs?.size;
+      if (typeof sizeVal === 'string') {
+        const s = sizeVal.trim();
+        if (s.endsWith('%')) {
+          const pct = parseFloat(s);
+          if (!Number.isNaN(pct)) scale = Math.max(0.1, Math.min(2, pct / 100));
+        } else if (s.endsWith('px') && area?.width) {
+          const px = parseFloat(s);
+          if (!Number.isNaN(px)) scale = Math.max(0.1, Math.min(2, px / area.width));
+        }
+      }
+      computedScale = scale;
+    } catch {
+      // keep default
     }
 
-    const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
-    const sent = new Set();
+    deliverables.push({
+      pid,
+      gridUrl,
+      cluesUrl,
+      cluesText,
+      themeKey,
+      computedScale,
+    });
+  }
 
-    for (const li of lineItems) {
-      const props = Array.isArray(li.properties) ? li.properties : [];
-      const getProp = (name) => {
-        const p = props.find(x => x && x.name === name);
-        return p ? String(p.value || '') : '';
-      };
+  if (!deliverables.length) {
+    console.warn('No _puzzle_id found in order line_items; cannot deliver PDFs.');
+    return res.status(200).send('Webhook received (no puzzle ids)');
+  }
 
-      // debug log to inspect incoming props (remove/level-down later)
-      console.log('Order line properties:', props);
+  // 2) Decide delivery mode (your required cutoff)
+  const deliveryMode = (deliverables.length <= 3) ? 'attachments' : 'links';
 
-      const pid = getProp('_puzzle_id');
-      if (!pid || sent.has(pid)) continue;
+  const subject = 'Your crosswords are ready';
+  const instantVsShippingLine =
+    'Your PDFs are ready instantly — your printed products will arrive separately.';
 
-      const gridUrl  = getProp('_custom_image');
-      const cluesUrl = getProp('_clues_image_url');
-      const shopVid  = String(li.variant_id || '');
+  if (deliveryMode === 'attachments') {
+    // Build ALL PDFs (<=3), attach all in ONE email
+    const attachments = [];
 
-      // parse design_specs (if present) to get clues text + size metadata
-      const designSpecsRaw = getProp('_design_specs') || '';
-      let design_specs = null;
-      try { design_specs = designSpecsRaw ? JSON.parse(designSpecsRaw) : null; } catch (err) {
-        console.warn('Failed to parse _design_specs JSON for line item', err.message);
-        design_specs = null;
-      }
-
-      // explicit fallback property
-      const explicitCluesText = getProp('_clues_text') || '';
-
-      // prefer design_specs.clues_text, else explicit _clues_text, else empty string
-      const cluesText = (design_specs && String(design_specs.clues_text || '').trim())
-        || String(explicitCluesText || '').trim() || '';
+    for (let i = 0; i < deliverables.length; i++) {
+      const d = deliverables[i];
 
       // fetch image buffers (if present)
       const [gridBuf, cluesBuf] = await Promise.all([
-        gridUrl ? fetchBuf(gridUrl) : Promise.resolve(null),
-        cluesUrl ? fetchBuf(cluesUrl) : Promise.resolve(null)
+        d.gridUrl ? fetchBuf(d.gridUrl) : Promise.resolve(null),
+        d.cluesUrl ? fetchBuf(d.cluesUrl) : Promise.resolve(null)
       ]);
-
-      // compute a simple scale hint from design_specs.size (mirrors handlePrintifyOrder logic)
-      let computedScale = 1;
-      try {
-        const area = printAreas?.[shopVid] || null;
-        let scale = 1.0;
-        const sizeVal = design_specs?.size;
-        if (typeof sizeVal === 'string') {
-          const s = sizeVal.trim();
-          if (s.endsWith('%')) {
-            const pct = parseFloat(s);
-            if (!Number.isNaN(pct)) scale = Math.max(0.1, Math.min(2, pct / 100));
-          } else if (s.endsWith('px') && area?.width) {
-            const px = parseFloat(s);
-            if (!Number.isNaN(px)) scale = Math.max(0.1, Math.min(2, px / area.width));
-          }
-        }
-        computedScale = scale;
-      } catch (e) {
-        // keep default 1
-      }
 
       // Build unified PDF (grid + clues). If cluesText is present, typeset it; otherwise it falls back to embedding cluesBuf.
       let pdfBuffer;
@@ -776,66 +878,95 @@ app.post('/webhooks/orders/create', async (req, res) => {
         pdfBuffer = await buildGridAndCluesPdf({
           gridBuf: gridBuf || undefined,
           cluesBuf: cluesBuf || undefined,
-          cluesText,
-          puzzleId: pid,
-          opts: { scale: computedScale }
+          cluesText: d.cluesText || '',
+          puzzleId: d.pid,
+          opts: { scale: d.computedScale, themeKey: d.themeKey || 'default' }
         });
       } catch (e) {
-        console.error(`❌ buildGridAndCluesPdf failed for puzzle ${pid}:`, e);
-        // attempt fallback: build PDF with images only if text rendering failed
+        console.error(`❌ buildGridAndCluesPdf failed for puzzle ${d.pid}:`, e);
+        // fallback: images only
         try {
-          const fallbackPdf = await buildGridAndCluesPdf({
+          pdfBuffer = await buildGridAndCluesPdf({
             gridBuf: gridBuf || undefined,
             cluesBuf: cluesBuf || undefined,
             cluesText: '',
-            puzzleId: pid,
-            opts: { scale: computedScale }
+            puzzleId: d.pid,
+            opts: { scale: d.computedScale, themeKey: d.themeKey || 'default' }
           });
-          pdfBuffer = fallbackPdf;
         } catch (ee) {
           console.error('❌ Fallback PDF generation also failed:', ee);
-          continue; // skip emailing this puzzle
+          continue;
         }
       }
 
-      // send email
-      try {
-        await sendEmailWithAttachment({
-          to,
-          subject: 'Your printable crossword (PDF)',
-          html: `
-      <p>Hi there,</p>
-      <p>Thank you for your purchase! 🎉</p>
-      <p>Your personalized crossword puzzle is attached as a PDF. It includes:</p>
-      <ul>
-        <li>The crossword grid</li>
-        <li>All the clues you provided</li>
-      </ul>
-      <p>You can:</p>
-      <ul>
-        <li>Print it out and solve it on paper</li>
-        <li>Fill it in digitally if you prefer</li>
-        <li>Share it with friends and family for fun</li>
-      </ul>
-      <p>Enjoy your puzzle and happy solving!</p>
-      <p>— The LoveGrids Team</p>
-    `,
-          filename: `LoveFrames_crossword-${String(pid).slice(0,8)}.pdf`,
-          pdfBuffer
-        });
-        console.log(`📧 Sent PDF email for puzzle ${pid} to ${to}`);
-      } catch (e) {
-        console.error(`❌ sendEmailWithAttachment failed for puzzle ${pid}:`, e);
-      }
-
-      sent.add(pid);
+      attachments.push({
+        filename: `Crossword ${i + 1}.pdf`,
+        content: pdfBuffer.toString('base64'),
+        contentType: 'application/pdf'
+      });
     }
-  } catch (e) {
-    console.error('❌ smart-pdf-email failed:', e);
-  }
 
-  return res.status(200).send('Webhook received');
-});
+    if (!attachments.length) {
+      console.warn('No PDFs could be generated for attachments mode.');
+      return res.status(200).send('Webhook received (no pdfs built)');
+    }
+
+    await sendEmailViaResend({
+      to,
+      subject,
+      html: `
+        <p>${instantVsShippingLine}</p>
+        <p>Attached: ${attachments.length} PDF(s)</p>
+      `,
+      attachments
+    });
+
+    console.log(`📧 Sent ONE email with ${attachments.length} PDF attachment(s) to ${to}`);
+  } else {
+    // Links mode (>3): NO attachments, just tokenized downloads
+    const base = getPublicBaseUrl(req);
+    const links = [];
+
+    for (let i = 0; i < deliverables.length; i++) {
+      const d = deliverables[i];
+
+      // You already have token logic; reuse it (order-bound)
+      const token = issuePdfToken(d.pid, orderId);
+
+      const url =
+        `${base}/apps/crossword/download-pdf` +
+        `?puzzleId=${encodeURIComponent(d.pid)}` +
+        `&token=${encodeURIComponent(token)}`;
+
+      links.push({ index: i + 1, url });
+    }
+
+    if (!links.length) {
+      console.warn('No links could be built for links mode.');
+      return res.status(200).send('Webhook received (no links built)');
+    }
+
+    await sendEmailViaResend({
+      to,
+      subject,
+      html: `
+        <p>${instantVsShippingLine}</p>
+        <p>Your crosswords are ready:</p>
+        <ul>
+          ${links.map(l => `<li>Crossword ${l.index} – <a href="${l.url}">Download</a></li>`).join('')}
+        </ul>
+      `,
+      attachments: [] // explicitly none
+    });
+
+    console.log(`📧 Sent ONE links email with ${links.length} download link(s) to ${to}`);
+  }
+} catch (e) {
+  console.error('❌ multi-pdf email delivery failed:', e);
+}
+
+return res.status(200).send('Webhook received');
+
 
 // ── Cloudinary config ───────────────────────────────────────────────
 cloudinary.config({
@@ -870,38 +1001,6 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-app.get('/api/printify/test', async (req, res) => {
-  try {
-    const shopId = await printifyService.getShopId();
-    res.json({ success: true, shopId });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Printify API failed', details: err.message });
-  }
-});
-
-app.get('/api/printify/test-variant', async (req, res) => {
-  try {
-    const blueprintId = await printifyService.findBlueprintId('mug');
-    const providers = await printifyService.listPrintProviders(blueprintId);
-    const variants = await printifyService.listVariants(blueprintId, providers[0].id);
-    const variant = variants.find(v => v.is_enabled !== false) || variants[0];
-    res.json({ variantId: variant.id, title: variant.title });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch variant', details: err.message });
-  }
-});
-
-app.get('/admin/regenerate-variant-map', async (req, res) => {
-  try {
-    variantMap = await generateMap();
-    res.send('✅ Variant map regenerated and saved.');
-  } catch (err) {
-    console.error('❌ Error generating variant map:', err.message, err.stack);
-    res.status(500).send(`Failed to regenerate variant map: ${err.message}`);
-  }
-});
 
 const submittedOrders = new Set();  // memory-only cache
 
@@ -1894,12 +1993,14 @@ app.get('/apps/crossword/download-pdf', async (req, res) => {
     const puzzleBuf = await fetchMaybe(rec.crosswordImage);
     const cluesBuf  = await fetchMaybe(rec.cluesImage);
 
-    const pdfBytes = await buildGridAndCluesPdf({
-      gridBuf: puzzleBuf || undefined,
-      cluesBuf: cluesBuf || undefined,
-      cluesText: (rec.cluesText || ''),  
-      puzzleId
-    });
+const pdfBytes = await buildGridAndCluesPdf({
+  gridBuf: puzzleBuf || undefined,
+  cluesBuf: cluesBuf || undefined,
+  cluesText: (rec.cluesText || ''),
+  puzzleId,
+  opts: { themeKey: rec.themeKey || 'default' }
+});
+
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="crossword-${String(puzzleId).slice(0,8)}.pdf"`);
