@@ -966,11 +966,6 @@ try {
   }
 
   return res.status(200).send('Webhook received');
-  
-} catch (err) {  // This closes the outer try block that starts around line 289
-  console.error('Error processing webhook:', err);
-  return res.status(500).send('Webhook processing failed');
-}
 });  // This closes app.post('/webhooks/orders/create'
 
 // ── Cloudinary config ───────────────────────────────────────────────
