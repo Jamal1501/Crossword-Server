@@ -1896,7 +1896,6 @@ app.all('/preview-pdf', async (req, res) => {
   String(payload.themeKey || payload.theme || payload.theme_key || 'default')
     .trim()
     .toLowerCase() || 'default';
-    const themeKey   = String(payload.themeKey || payload.theme || payload._theme || '').trim();
     const watermark  = String(payload.watermark ?? '1') !== '0'; // default: show PREVIEW
 
     if (!imageUrl) return res.status(400).send('Missing imageUrl');
