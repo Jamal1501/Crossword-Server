@@ -130,6 +130,10 @@ app.get('/print-areas', (req, res) => {
   });
 });
 
+app.get('/print-areas.json', (req, res) => {
+  res.json(printAreas);
+});
+
 app.get('/apps/crossword/postcard-variant-id', async (req, res) => {
   const id = process.env.POSTCARD_SHOPIFY_VARIANT_ID; // optional legacy
   if (!id) return res.status(404).json({ ok: false, error: 'Missing POSTCARD_SHOPIFY_VARIANT_ID' });
