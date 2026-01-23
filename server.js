@@ -1090,6 +1090,28 @@ app.post('/save-crossword', cors(corsOptions), async (req, res) => {
     console.error('Upload error:', error);
     res.status(500).json({ error: 'Failed to save image', details: error.message, success: false });
   }
+
+
+// [BG] Dedicated endpoint for background-committed composites (separate folder)
+app.options('/save-crossword-final', cors(corsOptions));
+app.post('/save-crossword-final', cors(corsOptions), async (req, res) => {
+  try {
+    const { image } = req.body;
+
+    if (!image || !image.startsWith('data:image/')) {
+      return res.status(400).json({ error: 'Invalid or missing image', success: false });
+    }
+
+    const result = await cloudinary.uploader.upload(image, {
+      folder: 'crosswords_final',
+      timeout: 60000,
+    });
+
+    res.json({ url: result.secure_url, success: true, public_id: result.public_id });
+  } catch (error) {
+    console.error('Final upload error:', error);
+    res.status(500).json({ error: 'Failed to save final image', details: error.message, success: false });
+  }
 });
 
 app.post('/api/printify/order-from-url', async (req, res) => {
@@ -2364,3 +2386,4 @@ app.get('/debug/paid-puzzles', (req, res) => {
 });
 
 export default app;
+
