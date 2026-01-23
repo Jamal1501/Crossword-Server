@@ -1090,7 +1090,7 @@ app.post('/save-crossword', cors(corsOptions), async (req, res) => {
     console.error('Upload error:', error);
     res.status(500).json({ error: 'Failed to save image', details: error.message, success: false });
   }
-
+}); 
 
 // [BG] Dedicated endpoint for background-committed composites (separate folder)
 app.options('/save-crossword-final', cors(corsOptions));
