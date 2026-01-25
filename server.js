@@ -250,9 +250,9 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleI
 
   const pdf = await PDFDocument.create();
   const { logoImg, font } = await prepareBrandAssets(pdf);
-const bgUrl = (opts && opts.bgUrl)
-  ? String(opts.bgUrl)
-  : getPdfBgUrlForTheme(opts?.themeKey);
+  const bgUrl = (opts && opts.bgUrl)
+    ? String(opts.bgUrl)
+    : getPdfBgUrlForTheme(opts?.themeKey);
   const approxWidth = (s, size, fnt) => (fnt ? fnt.widthOfTextAtSize(s, size) : s.length * size * 0.55);
   const useFont = font || await pdf.embedFont(StandardFonts.Helvetica);
 
@@ -278,7 +278,6 @@ const bgUrl = (opts && opts.bgUrl)
 
   // common page header/footer painter
   const paintHeaderFooter = (page, titleText, pageIndex) => {
-    // background (already drawn at page-level where needed)
     // header logo
     if (logoImg) {
       const lh = headerH - 10;
@@ -305,12 +304,32 @@ const bgUrl = (opts && opts.bgUrl)
   const addImagePage = async (imageBuf, title, pageIndex) => {
     const page = pdf.addPage([a4w, a4h]);
 
-    // background image (brand) if present
+    // background image (brand) - FULL BLEED COVER
     if (bgUrl) {
       try {
         const bgBuf = await fetchBuf(bgUrl);
         const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
-        page.drawImage(bgImg, { x: 0, y: 0, width: a4w, height: a4h });
+        
+        // Scale background to COVER entire page (like CSS object-fit: cover)
+        const bgAspect = bgImg.width / bgImg.height;
+        const pageAspect = a4w / a4h;
+        
+        let bgW, bgH, bgX, bgY;
+        if (bgAspect > pageAspect) {
+          // Background is wider - fit to height, crop sides
+          bgH = a4h;
+          bgW = bgH * bgAspect;
+          bgX = (a4w - bgW) / 2;
+          bgY = 0;
+        } else {
+          // Background is taller - fit to width, crop top/bottom
+          bgW = a4w;
+          bgH = bgW / bgAspect;
+          bgX = 0;
+          bgY = (a4h - bgH) / 2;
+        }
+        
+        page.drawImage(bgImg, { x: bgX, y: bgY, width: bgW, height: bgH });
       } catch (e) {
         console.warn('PDF bg load failed:', e.message);
       }
@@ -318,6 +337,7 @@ const bgUrl = (opts && opts.bgUrl)
 
     paintHeaderFooter(page, title, pageIndex);
 
+    // Crossword grid - keep existing size/scaling
     if (imageBuf) {
       const isPng = imageBuf[0] === 0x89 && imageBuf[1] === 0x50;
       const img = isPng ? await pdf.embedPng(imageBuf) : await pdf.embedJpg(imageBuf);
@@ -334,12 +354,32 @@ const bgUrl = (opts && opts.bgUrl)
   const addCluesPage = async ({ cluesBuf, cluesText, pageIndex, scale = 1 }) => {
     const page = pdf.addPage([a4w, a4h]);
 
-    // background image (brand)
+    // background image (brand) - FULL BLEED COVER
     if (bgUrl) {
       try {
         const bgBuf = await fetchBuf(bgUrl);
         const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
-        page.drawImage(bgImg, { x: 0, y: 0, width: a4w, height: a4h });
+        
+        // Scale background to COVER entire page (like CSS object-fit: cover)
+        const bgAspect = bgImg.width / bgImg.height;
+        const pageAspect = a4w / a4h;
+        
+        let bgW, bgH, bgX, bgY;
+        if (bgAspect > pageAspect) {
+          // Background is wider - fit to height, crop sides
+          bgH = a4h;
+          bgW = bgH * bgAspect;
+          bgX = (a4w - bgW) / 2;
+          bgY = 0;
+        } else {
+          // Background is taller - fit to width, crop top/bottom
+          bgW = a4w;
+          bgH = bgW / bgAspect;
+          bgX = 0;
+          bgY = (a4h - bgH) / 2;
+        }
+        
+        page.drawImage(bgImg, { x: bgX, y: bgY, width: bgW, height: bgH });
       } catch (e) {
         console.warn('PDF bg load failed:', e.message);
       }
