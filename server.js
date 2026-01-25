@@ -304,50 +304,34 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleI
   const addImagePage = async (imageBuf, title, pageIndex) => {
     const page = pdf.addPage([a4w, a4h]);
 
-    // background image (brand) - FULL BLEED COVER
-    if (bgUrl) {
-      try {
-        const bgBuf = await fetchBuf(bgUrl);
-        const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
-        
-        // Scale background to COVER entire page (like CSS object-fit: cover)
-        const bgAspect = bgImg.width / bgImg.height;
-        const pageAspect = a4w / a4h;
-        
-        let bgW, bgH, bgX, bgY;
-        if (bgAspect > pageAspect) {
-          // Background is wider - fit to height, crop sides
-          bgH = a4h;
-          bgW = bgH * bgAspect;
-          bgX = (a4w - bgW) / 2;
-          bgY = 0;
-        } else {
-          // Background is taller - fit to width, crop top/bottom
-          bgW = a4w;
-          bgH = bgW / bgAspect;
-          bgX = 0;
-          bgY = (a4h - bgH) / 2;
-        }
-        
-        page.drawImage(bgImg, { x: bgX, y: bgY, width: bgW, height: bgH });
-      } catch (e) {
-        console.warn('PDF bg load failed:', e.message);
-      }
-    }
-
-    paintHeaderFooter(page, title, pageIndex);
-
-    // Crossword grid - keep existing size/scaling
     if (imageBuf) {
       const isPng = imageBuf[0] === 0x89 && imageBuf[1] === 0x50;
       const img = isPng ? await pdf.embedPng(imageBuf) : await pdf.embedJpg(imageBuf);
       const { width, height } = img.size();
-      const scale = Math.min(maxW / width, maxH / height, 1);
-      const w = width * scale, h = height * scale;
-      const x = (a4w - w) / 2;
-      const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
-      page.drawImage(img, { x, y, width: w, height: h });
+      
+      // Scale the composited image (bg + crossword) to COVER the entire page
+      const imgAspect = width / height;
+      const pageAspect = a4w / a4h;
+      
+      let imgW, imgH, imgX, imgY;
+      if (imgAspect > pageAspect) {
+        // Image is wider - fit to height, crop sides
+        imgH = a4h;
+        imgW = imgH * imgAspect;
+        imgX = (a4w - imgW) / 2;
+        imgY = 0;
+      } else {
+        // Image is taller - fit to width, crop top/bottom
+        imgW = a4w;
+        imgH = imgW / imgAspect;
+        imgX = 0;
+        imgY = (a4h - imgH) / 2;
+      }
+      
+      page.drawImage(img, { x: imgX, y: imgY, width: imgW, height: imgH });
     }
+
+    paintHeaderFooter(page, title, pageIndex);
   };
 
   // Helper to add a page with clues text (or image fallback)
@@ -459,6 +443,7 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleI
 
   return Buffer.from(await pdf.save());
 }
+
 
 async function sendEmailViaResend({ to, subject, html, attachments = [] }) {
   if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
