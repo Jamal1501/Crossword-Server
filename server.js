@@ -437,12 +437,33 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesTex
       if (startY > topLimit) startY = topLimit;
       if (startY - contentHeight < bottomLimit) startY = Math.max(bottomLimit + contentHeight, startY);
 
-      let y = startY;
-      for (const line of lines) {
-        page.drawText(line, { x: margin, y: y, size: fontSize, font: useFont, color: rgb(0.08,0.08,0.08) });
-        y -= leading;
-        if (y < bottomLimit) break;
-      }
+// ✅ Center the whole clues block horizontally on the page
+const widths = lines
+  .filter(l => l && l.trim().length)
+  .map(l => useFont.widthOfTextAtSize(l, fontSize));
+
+const widest = widths.length ? Math.max(...widths) : 0;
+
+// ideal centered x for the whole block
+let blockX = (a4w - widest) / 2;
+
+// keep block inside margins (safety clamp)
+const minX = margin;
+const maxX = a4w - margin - widest;
+blockX = Math.max(minX, Math.min(blockX, maxX));
+
+let y = startY;
+for (const line of lines) {
+  page.drawText(line, {
+    x: blockX, // ✅ centered block
+    y: y,
+    size: fontSize,
+    font: useFont,
+    color: rgb(0.08,0.08,0.08)
+  });
+  y -= leading;
+  if (y < bottomLimit) break;
+}
     } else if (cluesBuf) {
       const isPng = cluesBuf[0] === 0x89 && cluesBuf[1] === 0x50;
       const img = isPng ? await pdf.embedPng(cluesBuf) : await pdf.embedJpg(cluesBuf);
