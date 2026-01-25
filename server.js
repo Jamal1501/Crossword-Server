@@ -437,11 +437,11 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesTex
       if (startY > topLimit) startY = topLimit;
       if (startY - contentHeight < bottomLimit) startY = Math.max(bottomLimit + contentHeight, startY);
 
-// ✅ Center the whole clues block horizontally on the page
-const widths = lines
-  .filter(l => l && l.trim().length)
-  .map(l => useFont.widthOfTextAtSize(l, fontSize));
+// ✅ Center the whole clues block horizontally + vertically on the page
+const cleanLines = lines.filter(l => l && l.trim().length);
 
+// ----- HORIZONTAL block centering -----
+const widths = cleanLines.map(l => useFont.widthOfTextAtSize(l, fontSize));
 const widest = widths.length ? Math.max(...widths) : 0;
 
 // ideal centered x for the whole block
@@ -452,18 +452,36 @@ const minX = margin;
 const maxX = a4w - margin - widest;
 blockX = Math.max(minX, Math.min(blockX, maxX));
 
-let y = startY;
-for (const line of lines) {
+// ----- VERTICAL block centering -----
+const blockHeight = cleanLines.length * leading;
+
+// define usable vertical area (page minus margins)
+const topY = a4h - margin;
+const bottomY = margin;
+
+// center of the usable area
+const centerY = (topY + bottomY) / 2;
+
+// startY should be the top line position such that the whole block is centered
+let y = centerY + (blockHeight / 2) - fontSize;
+
+// clamp so it never goes above top margin
+if (y > topY - fontSize) y = topY - fontSize;
+
+// draw lines downwards
+for (const line of cleanLines) {
   page.drawText(line, {
-    x: blockX, // ✅ centered block
-    y: y,
+    x: blockX,
+    y,
     size: fontSize,
     font: useFont,
-    color: rgb(0.08,0.08,0.08)
+    color: rgb(0.08, 0.08, 0.08),
   });
+
   y -= leading;
-  if (y < bottomLimit) break;
+  if (y < bottomY) break;
 }
+
     } else if (cluesBuf) {
       const isPng = cluesBuf[0] === 0x89 && cluesBuf[1] === 0x50;
       const img = isPng ? await pdf.embedPng(cluesBuf) : await pdf.embedJpg(cluesBuf);
