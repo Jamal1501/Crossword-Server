@@ -548,7 +548,8 @@ async function handlePrintifyOrder(order) {
       return p ? String(p.value || '') : '';
     };
 
-    const custom_image      = getProp('_custom_image');
+// ✅ Printify must use MERGED composite
+    const custom_image      = getProp('_merged_image_url') || getProp('_custom_image');
     const clues_image_url   = getProp('_clues_image_url');   // clues image (if generated)
     const clue_output_mode  = getProp('_clue_output');       // 'back' | 'postcard' | 'none'
     const design_specs_raw  = getProp('_design_specs');
@@ -765,10 +766,16 @@ app.post('/webhooks/orders/create', async (req, res) => {
 
       const pid = getProp('_puzzle_id');
       if (!pid) continue;
+      
+// ✅ PDF wants UNMERGED crossword, not the merged composite
+const crosswordImage =
+  getProp('_crossword_image_url') ||
+  getProp('_grid_image_url') ||
+  getProp('_custom_image');
 
-      const crosswordImage = getProp('_custom_image');
-      const cluesImage     = getProp('_clues_image_url');
-      const backgroundImage = getProp('_background_image');
+const cluesImage     = getProp('_clues_image_url');
+const backgroundImage = getProp('_background_image');
+
 
       // NEW: parse text from design_specs / _clues_text
       const design_specs_raw = getProp('_design_specs') || '';
@@ -847,7 +854,15 @@ try {
     const rec = (typeof PaidPuzzles !== 'undefined') ? PaidPuzzles.get(pid) : null;
 
     // Fallback to line item properties if record missing
-    const gridUrl  = rec?.crosswordImage || getProp('_custom_image');
+const gridUrl =
+  rec?.crosswordImage ||
+  getProp('_crossword_image_url') ||
+  getProp('_grid_image_url') ||
+  getProp('_custom_image');
+
+const bgUrl =
+  rec?.backgroundImage ||
+  getProp('_background_image');
     const cluesUrl = rec?.cluesImage || getProp('_clues_image_url');
     const shopVid  = String(li.variant_id || '');
     const themeKey =
@@ -895,14 +910,15 @@ try {
       // keep default
     }
 
-    deliverables.push({
-      pid,
-      gridUrl,
-      cluesUrl,
-      cluesText,
-      themeKey,
-      computedScale,
-    });
+deliverables.push({
+  pid,
+  gridUrl,
+  bgUrl,       // ✅ NEW
+  cluesUrl,
+  cluesText,
+  themeKey,
+  computedScale,
+});
   }
 
   if (!deliverables.length) {
@@ -925,21 +941,24 @@ try {
       const d = deliverables[i];
 
       // fetch image buffers (if present)
-      const [gridBuf, cluesBuf] = await Promise.all([
-        d.gridUrl ? fetchBuf(d.gridUrl) : Promise.resolve(null),
-        d.cluesUrl ? fetchBuf(d.cluesUrl) : Promise.resolve(null)
-      ]);
+const [gridBuf, cluesBuf, backgroundBuf] = await Promise.all([
+  d.gridUrl ? fetchBuf(d.gridUrl) : Promise.resolve(null),
+  d.cluesUrl ? fetchBuf(d.cluesUrl) : Promise.resolve(null),
+  d.bgUrl ? fetchBuf(d.bgUrl) : Promise.resolve(null),
+]);
+
 
       // Build unified PDF (grid + clues). If cluesText is present, typeset it; otherwise it falls back to embedding cluesBuf.
       let pdfBuffer;
       try {
-        pdfBuffer = await buildGridAndCluesPdf({
-          gridBuf: gridBuf || undefined,
-          cluesBuf: cluesBuf || undefined,
-          cluesText: d.cluesText || '',
-          puzzleId: d.pid,
-          opts: { scale: d.computedScale, themeKey: d.themeKey || 'default' }
-        });
+pdfBuffer = await buildGridAndCluesPdf({
+  gridBuf: gridBuf || undefined,
+  backgroundBuf: backgroundBuf || undefined, // ✅ NEW
+  cluesBuf: cluesBuf || undefined,
+  cluesText: d.cluesText || '',
+  puzzleId: d.pid,
+  opts: { scale: d.computedScale, themeKey: d.themeKey || 'default' }
+});
       } catch (e) {
         console.error(`❌ buildGridAndCluesPdf failed for puzzle ${d.pid}:`, e);
         // fallback: images only
@@ -1149,6 +1168,29 @@ app.post('/save-crossword', cors(corsOptions), async (req, res) => {
     res.status(500).json({ error: 'Failed to save image', details: error.message, success: false });
   }
 }); 
+
+
+// [BG] Upload background image only (separate folder)
+app.options('/save-background-image', cors(corsOptions));
+app.post('/save-background-image', cors(corsOptions), async (req, res) => {
+  try {
+    const { image } = req.body;
+
+    if (!image || !image.startsWith('data:image/')) {
+      return res.status(400).json({ error: 'Invalid or missing image', success: false });
+    }
+
+    const result = await cloudinary.uploader.upload(image, {
+      folder: 'crossword_backgrounds',
+      timeout: 60000,
+    });
+
+    res.json({ url: result.secure_url, success: true, public_id: result.public_id });
+  } catch (error) {
+    console.error('Background upload error:', error);
+    res.status(500).json({ error: 'Failed to save background image', details: error.message, success: false });
+  }
+});
 
 // [BG] Dedicated endpoint for background-committed composites (separate folder)
 app.options('/save-crossword-final', cors(corsOptions));
