@@ -238,7 +238,7 @@ async function prepareBrandAssets(pdf) {
 
 
 // Styled 1–2 page GRID + CLUES PDF (download/email) — unified & text-capable
-async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleId = '', opts = {} } = {}) {
+async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesText = '', puzzleId = '', opts = {} } = {}) {
   const a4w = 595.28, a4h = 841.89;
   const margin = 36;
   const headerH = 38;
@@ -300,63 +300,101 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleI
     page.drawText(footerRight, { x: a4w - margin - 10 - rw, y: margin + 8, size: 10, color: rgb(0.25,0.25,0.25), font: useFont });
   };
 
-  // Helper to add a page with an embedded image (centered, scaled to maxW/maxH)
-  const addImagePage = async (imageBuf, title, pageIndex) => {
+  // Helper to add a page with crossword grid (user background fills page, crossword properly sized)
+  const addImagePage = async (crosswordBuf, userBackgroundBuf, title, pageIndex) => {
     const page = pdf.addPage([a4w, a4h]);
 
-    if (imageBuf) {
-      const isPng = imageBuf[0] === 0x89 && imageBuf[1] === 0x50;
-      const img = isPng ? await pdf.embedPng(imageBuf) : await pdf.embedJpg(imageBuf);
-      const { width, height } = img.size();
-      
-      // Scale the composited image (bg + crossword) to COVER the entire page
-      const imgAspect = width / height;
-      const pageAspect = a4w / a4h;
-      
-      let imgW, imgH, imgX, imgY;
-      if (imgAspect > pageAspect) {
-        // Image is wider - fit to height, crop sides
-        imgH = a4h;
-        imgW = imgH * imgAspect;
-        imgX = (a4w - imgW) / 2;
-        imgY = 0;
-      } else {
-        // Image is taller - fit to width, crop top/bottom
-        imgW = a4w;
-        imgH = imgW / imgAspect;
-        imgX = 0;
-        imgY = (a4h - imgH) / 2;
+    // Layer 1: User's background (if provided) - FULL BLEED
+    if (userBackgroundBuf) {
+      try {
+        const isPng = userBackgroundBuf[0] === 0x89 && userBackgroundBuf[1] === 0x50;
+        const bgImg = isPng ? await pdf.embedPng(userBackgroundBuf) : await pdf.embedJpg(userBackgroundBuf);
+        
+        // Scale background to COVER entire page
+        const bgAspect = bgImg.width / bgImg.height;
+        const pageAspect = a4w / a4h;
+        
+        let bgW, bgH, bgX, bgY;
+        if (bgAspect > pageAspect) {
+          bgH = a4h;
+          bgW = bgH * bgAspect;
+          bgX = (a4w - bgW) / 2;
+          bgY = 0;
+        } else {
+          bgW = a4w;
+          bgH = bgW / bgAspect;
+          bgX = 0;
+          bgY = (a4h - bgH) / 2;
+        }
+        
+        page.drawImage(bgImg, { x: bgX, y: bgY, width: bgW, height: bgH });
+      } catch (e) {
+        console.warn('[PDF] User background failed:', e.message);
       }
-      
-      page.drawImage(img, { x: imgX, y: imgY, width: imgW, height: imgH });
+    } else if (bgUrl) {
+      // Fallback: theme background if no user background
+      try {
+        const bgBuf = await fetchBuf(bgUrl);
+        const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
+        
+        const bgAspect = bgImg.width / bgImg.height;
+        const pageAspect = a4w / a4h;
+        
+        let bgW, bgH, bgX, bgY;
+        if (bgAspect > pageAspect) {
+          bgH = a4h;
+          bgW = bgH * bgAspect;
+          bgX = (a4w - bgW) / 2;
+          bgY = 0;
+        } else {
+          bgW = a4w;
+          bgH = bgW / bgAspect;
+          bgX = 0;
+          bgY = (a4h - bgH) / 2;
+        }
+        
+        page.drawImage(bgImg, { x: bgX, y: bgY, width: bgW, height: bgH });
+      } catch (e) {
+        console.warn('[PDF] Theme background failed:', e.message);
+      }
     }
 
+    // Layer 2: Header/Footer
     paintHeaderFooter(page, title, pageIndex);
+
+    // Layer 3: Crossword (properly sized, centered)
+    if (crosswordBuf) {
+      const isPng = crosswordBuf[0] === 0x89 && crosswordBuf[1] === 0x50;
+      const img = isPng ? await pdf.embedPng(crosswordBuf) : await pdf.embedJpg(crosswordBuf);
+      const { width, height } = img.size();
+      const scale = Math.min(maxW / width, maxH / height, 1);
+      const w = width * scale, h = height * scale;
+      const x = (a4w - w) / 2;
+      const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
+      page.drawImage(img, { x, y, width: w, height: h });
+    }
   };
 
   // Helper to add a page with clues text (or image fallback)
   const addCluesPage = async ({ cluesBuf, cluesText, pageIndex, scale = 1 }) => {
     const page = pdf.addPage([a4w, a4h]);
 
-    // background image (brand) - FULL BLEED COVER
+    // background image (theme brand) - FULL BLEED COVER
     if (bgUrl) {
       try {
         const bgBuf = await fetchBuf(bgUrl);
         const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
         
-        // Scale background to COVER entire page (like CSS object-fit: cover)
         const bgAspect = bgImg.width / bgImg.height;
         const pageAspect = a4w / a4h;
         
         let bgW, bgH, bgX, bgY;
         if (bgAspect > pageAspect) {
-          // Background is wider - fit to height, crop sides
           bgH = a4h;
           bgW = bgH * bgAspect;
           bgX = (a4w - bgW) / 2;
           bgY = 0;
         } else {
-          // Background is taller - fit to width, crop top/bottom
           bgW = a4w;
           bgH = bgW / bgAspect;
           bgX = 0;
@@ -373,18 +411,15 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleI
 
     // If cluesText provided -> typeset; otherwise fall back to image embedding if cluesBuf present
     if (cluesText && cluesText.trim().length) {
-      // compute font size from scale param (clamped)
       const baseSize = Number(process.env.PDF_CLUES_BASE_SIZE || 11.5);
       const fontSize = Math.max(8, Math.min(34, baseSize * (Number(scale) || 1)));
       const leading = fontSize * 1.35;
       const contentMaxW = maxW;
       const contentMaxH = maxH;
 
-      // Preserve manual newlines/paragraphs: sanitize and split paragraphs
       const normalized = cluesText.replace(/\r/g, '');
-      const paragraphs = normalized.split('\n\n'); // paragraphs separated by blank line
+      const paragraphs = normalized.split('\n\n');
 
-      // Build lines while preserving single-line breaks inside paragraphs as explicit lines
       let lines = [];
       for (const p of paragraphs) {
         const rawLines = p.split('\n').map(s => s.trim()).filter(Boolean);
@@ -392,11 +427,9 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleI
           const wrapped = wrapTextToLines(rl, useFont, fontSize, contentMaxW);
           lines.push(...wrapped);
         }
-        // paragraph gap (a blank line)
         lines.push('');
       }
 
-      // Compute vertical offset to center the block within the area available
       const contentHeight = lines.length * leading;
       let startY = (a4h - margin - headerH) - ((headerH - footerH) / 2) - (contentHeight / 2);
       const topLimit = a4h - margin - headerH - 10;
@@ -404,17 +437,13 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleI
       if (startY > topLimit) startY = topLimit;
       if (startY - contentHeight < bottomLimit) startY = Math.max(bottomLimit + contentHeight, startY);
 
-      // draw lines
       let y = startY;
       for (const line of lines) {
-        // allow tiny horizontal padding
         page.drawText(line, { x: margin, y: y, size: fontSize, font: useFont, color: rgb(0.08,0.08,0.08) });
         y -= leading;
-        // stop if we overflow bottom (safety)
         if (y < bottomLimit) break;
       }
     } else if (cluesBuf) {
-      // fallback to image embedding (maintain previous behavior)
       const isPng = cluesBuf[0] === 0x89 && cluesBuf[1] === 0x50;
       const img = isPng ? await pdf.embedPng(cluesBuf) : await pdf.embedJpg(cluesBuf);
       const { width, height } = img.size();
@@ -424,17 +453,15 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, cluesText = '', puzzleI
       const y = (a4h - h) / 2 - ((headerH - footerH) / 2);
       page.drawImage(img, { x, y, width: w, height: h });
     } else {
-      // nothing to render — show empty placeholder text
       page.drawText('No clues available', { x: margin, y: a4h - margin - headerH - 10, size: 12, font: useFont, color: rgb(0.5,0.5,0.5) });
     }
   };
 
-  // Page index counter
   let pageIndex = 1;
 
-  // GRID page (if provided)
+  // GRID page (crossword with user's background behind it)
   if (gridBuf) {
-    await addImagePage(gridBuf, 'Crossword Grid', pageIndex);
+    await addImagePage(gridBuf, backgroundBuf, 'Crossword Grid', pageIndex);
     pageIndex++;
   }
 
@@ -741,6 +768,7 @@ app.post('/webhooks/orders/create', async (req, res) => {
 
       const crosswordImage = getProp('_custom_image');
       const cluesImage     = getProp('_clues_image_url');
+      const backgroundImage = getProp('_background_image');
 
       // NEW: parse text from design_specs / _clues_text
       const design_specs_raw = getProp('_design_specs') || '';
@@ -761,6 +789,7 @@ PaidPuzzles.set(pid, {
   orderId: String(order.id),
   email: (order.email || order?.customer?.email || '') + '',
   crosswordImage,
+  backgroundImage,
   cluesImage,
   cluesText,
   themeKey, // ✅ NEW
@@ -2043,14 +2072,18 @@ app.get('/apps/crossword/download-pdf', async (req, res) => {
       return res.status(403).json({ error: 'Invalid token' });
     }
 
-    const fetchMaybe = async (url) => (url ? fetchBuf(url) : null);
+// In the webhook handler, when building PDFs:
 
-    const puzzleBuf = await fetchMaybe(rec.crosswordImage);
-    const cluesBuf  = await fetchMaybe(rec.cluesImage);
+const fetchMaybe = async (url) => (url ? fetchBuf(url) : null);
+
+const puzzleBuf = await fetchMaybe(rec.crosswordImage);  // This is the composite
+const cluesBuf  = await fetchMaybe(rec.cluesImage);
+const backgroundBuf = await fetchMaybe(rec.backgroundImage);  // ✅ NEW - original background
 
 const pdfBytes = await buildGridAndCluesPdf({
   gridBuf: puzzleBuf || undefined,
   cluesBuf: cluesBuf || undefined,
+  backgroundBuf: backgroundBuf || undefined,  // ✅ NEW
   cluesText: (rec.cluesText || ''),
   puzzleId,
   opts: { themeKey: rec.themeKey || 'default' }
