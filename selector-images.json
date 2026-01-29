@@ -1,0 +1,25 @@
+{
+  "default": {
+    "products": {
+      "69786300e16bdd27360e4283": {
+        "primary": "https://YOUR_CDN/default/tote-person-front.jpg",
+        "gallery": [
+          "https://YOUR_CDN/default/tote-person-front.jpg",
+          "https://YOUR_CDN/default/tote-person-back.jpg",
+          "https://YOUR_CDN/default/tote-front-flat.jpg"
+        ]
+      }
+    }
+  },
+  "wedding": {
+    "products": {
+      "69786300e16bdd27360e4283": {
+        "primary": "https://YOUR_CDN/wedding/tote-person-front.jpg",
+        "gallery": [
+          "https://YOUR_CDN/wedding/tote-person-front.jpg",
+          "https://YOUR_CDN/wedding/tote-person-back.jpg"
+        ]
+      }
+    }
+  }
+}
