@@ -304,7 +304,11 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesTex
   const addImagePage = async (crosswordBuf, userBackgroundBuf, title, pageIndex) => {
     const page = pdf.addPage([a4w, a4h]);
 
-    // Layer 1: User's background (if provided) - FULL BLEED
+    // Layer 1: Background (FULL BLEED)
+    // IMPORTANT: If the user background isn't close to A4 aspect, COVER-scaling will look
+    // "zoomed" on page 1 while page 2 (theme A4 bg) looks correct.
+    // So: only use userBackgroundBuf when it is A4-ish; otherwise fall back to theme bg.
+    let bgDrawn = false;
     if (userBackgroundBuf) {
       try {
         const isPng = userBackgroundBuf[0] === 0x89 && userBackgroundBuf[1] === 0x50;
@@ -313,6 +317,10 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesTex
         // Scale background to COVER entire page
         const bgAspect = bgImg.width / bgImg.height;
         const pageAspect = a4w / a4h;
+
+        // If it's way off (e.g. square product bg), don't use it for PDF pages.
+        const aspectDiff = Math.abs(bgAspect - pageAspect) / pageAspect;
+        if (aspectDiff > 0.12) throw new Error(`aspect mismatch ${bgAspect.toFixed(3)} vs ${pageAspect.toFixed(3)}`);
         
         let bgW, bgH, bgX, bgY;
         if (bgAspect > pageAspect) {
@@ -328,11 +336,14 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesTex
         }
         
         page.drawImage(bgImg, { x: bgX, y: bgY, width: bgW, height: bgH });
+        bgDrawn = true;
       } catch (e) {
         console.warn('[PDF] User background failed:', e.message);
       }
-    } else if (bgUrl) {
-      // Fallback: theme background if no user background
+    }
+
+    if (!bgDrawn && bgUrl) {
+      // Fallback: theme background (A4 template)
       try {
         const bgBuf = await fetchBuf(bgUrl);
         const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
