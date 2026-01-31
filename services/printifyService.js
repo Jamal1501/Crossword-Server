@@ -244,6 +244,23 @@ function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
 }
 
 /* --------------------------
+   Cover scale helper
+--------------------------- */
+// Fill the placeholder (may crop). This is what you want if you're trying to
+// eliminate white borders on mismatched aspect ratios (posters, phone cases, etc.).
+// NOTE: This may exceed 1 for tall print areas.
+function clampCoverScale({ Aw, Ah, Iw, Ih, requested = 1, max = 3 }) {
+  const req = (requested ?? 1);
+  if (!Aw || !Ah || !Iw || !Ih) return Math.max(0.1, Math.min(max, req));
+
+  // Printify scale is width-relative: designWidth = scale * areaWidth
+  // To cover the area height: scale >= (Ah/Aw) * (Iw/Ih)
+  const sMin = Math.max(1, (Ah / Aw) * (Iw / Ih));
+  const out  = req * sMin;
+  return Math.max(0.1, Math.min(max, out));
+}
+
+/* --------------------------
    Small helper lookups
 --------------------------- */
 export async function getShopId() {
@@ -670,26 +687,32 @@ export async function createOrder({
     throw e;
   }
 
-  // 4) Contain-fit scale for FRONT (avoid clipping)
+  // 4) COVER-fit scale for FRONT (fills the placeholder; avoids white borders)
+  // If you keep contain-fit here, posters/cases will *always* look smaller (letterboxed).
   const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
+  const FRONT_SCALE_MAX  = Number(process.env.FRONT_SCALE_MAX || 3.0);
+
   let requestedFrontScale = (position?.scale ?? 1) * FRONT_SCALE_MULT;
+  // don't allow underfilling; minimum 1 ensures at least full width
+  requestedFrontScale = Math.max(1, requestedFrontScale);
+
   let finalScale = requestedFrontScale;
   try {
     const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
-    finalScale = clampContainScale({
+    finalScale = clampCoverScale({
       Aw: ph?.width, Ah: ph?.height,
       Iw: uploadedFront?.width, Ih: uploadedFront?.height,
-      requested: requestedFrontScale
+      requested: requestedFrontScale,
+      max: FRONT_SCALE_MAX
     });
-    finalScale = Math.max(0, Math.min(1, finalScale)); // hard clamp
-    console.log('🧮 Scale containment (front)', {
+    console.log('🧮 Scale cover-fit (front)', {
       Aw: ph?.width, Ah: ph?.height,
       Iw: uploadedFront?.width, Ih: uploadedFront?.height,
       requested: requestedFrontScale,
       finalScale
     });
   } catch (e) {
-    console.warn('⚠️ Contain-scale calc failed (front):', e.message);
+    console.warn('⚠️ Cover-scale calc failed (front):', e.message);
   }
 
   // 5) Decide positions
