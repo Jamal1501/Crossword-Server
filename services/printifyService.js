@@ -236,28 +236,18 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId, variantI
 --------------------------- */
 // Allow enlarging to fully contain within the placeholder box
 // (Printify expects 0..1; clamp the final!)
-function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
-  if (!Aw || !Ah || !Iw || !Ih) return Math.max(0, Math.min(1, requested ?? 1));
-  const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih)); // fraction of area width for contain
-  const out  = (requested ?? 1) * sMax;
+export function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
+  // Printify "scale" is width-relative: designWidth = scale * areaWidth.
+  // To guarantee contain-fit (no cropping), cap requested to [0..1], then
+  // multiply by the maximum safe contain factor for this (areaAspect, imageAspect).
+  const req = (typeof requested === 'number' && isFinite(requested)) ? requested : 1;
+  const req01 = Math.max(0, Math.min(1, req));
+
+  if (!Aw || !Ah || !Iw || !Ih) return req01;
+
+  const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih)); // maximum contain-fit scale
+  const out  = req01 * sMax; // requested is a multiplier of the safe max
   return Math.max(0, Math.min(1, out));
-}
-
-/* --------------------------
-   Cover scale helper
---------------------------- */
-// Fill the placeholder (may crop). This is what you want if you're trying to
-// eliminate white borders on mismatched aspect ratios (posters, phone cases, etc.).
-// NOTE: This may exceed 1 for tall print areas.
-function clampCoverScale({ Aw, Ah, Iw, Ih, requested = 1, max = 3 }) {
-  const req = (requested ?? 1);
-  if (!Aw || !Ah || !Iw || !Ih) return Math.max(0.1, Math.min(max, req));
-
-  // Printify scale is width-relative: designWidth = scale * areaWidth
-  // To cover the area height: scale >= (Ah/Aw) * (Iw/Ih)
-  const sMin = Math.max(1, (Ah / Aw) * (Iw / Ih));
-  const out  = req * sMin;
-  return Math.max(0.1, Math.min(max, out));
 }
 
 /* --------------------------
@@ -687,32 +677,26 @@ export async function createOrder({
     throw e;
   }
 
-  // 4) COVER-fit scale for FRONT (fills the placeholder; avoids white borders)
-  // If you keep contain-fit here, posters/cases will *always* look smaller (letterboxed).
+  // 4) Contain-fit scale for FRONT (avoid clipping)
   const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
-  const FRONT_SCALE_MAX  = Number(process.env.FRONT_SCALE_MAX || 3.0);
-
   let requestedFrontScale = (position?.scale ?? 1) * FRONT_SCALE_MULT;
-  // don't allow underfilling; minimum 1 ensures at least full width
-  requestedFrontScale = Math.max(1, requestedFrontScale);
-
   let finalScale = requestedFrontScale;
   try {
     const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
-    finalScale = clampCoverScale({
+    finalScale = clampContainScale({
       Aw: ph?.width, Ah: ph?.height,
       Iw: uploadedFront?.width, Ih: uploadedFront?.height,
-      requested: requestedFrontScale,
-      max: FRONT_SCALE_MAX
+      requested: requestedFrontScale
     });
-    console.log('🧮 Scale cover-fit (front)', {
+    finalScale = Math.max(0, Math.min(1, finalScale)); // hard clamp
+    console.log('🧮 Scale containment (front)', {
       Aw: ph?.width, Ah: ph?.height,
       Iw: uploadedFront?.width, Ih: uploadedFront?.height,
       requested: requestedFrontScale,
       finalScale
     });
   } catch (e) {
-    console.warn('⚠️ Cover-scale calc failed (front):', e.message);
+    console.warn('⚠️ Contain-scale calc failed (front):', e.message);
   }
 
   // 5) Decide positions
