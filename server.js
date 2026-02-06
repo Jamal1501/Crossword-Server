@@ -9,7 +9,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import * as printifyService from './services/printifyService.js';
 import { resolveBpPpForVariant, getVariantPlaceholderByPos } from './services/printifyService.js';
 import { safeFetch } from './services/printifyService.js';
-import { uploadImageFromUrl, applyImageToProduct, applyImagesToProductDual, fetchProduct } from './services/printifyService.js';
+import { uploadImageFromUrl, applyImageToProduct, applyImagesToProductDual, fetchProduct, clampContainScale } from './services/printifyService.js';
 import dotenv from 'dotenv';
 import { generateMap } from './scripts/generateVariantMap.js';
 import path from 'path';
@@ -304,11 +304,7 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesTex
   const addImagePage = async (crosswordBuf, userBackgroundBuf, title, pageIndex) => {
     const page = pdf.addPage([a4w, a4h]);
 
-    // Layer 1: Background (FULL BLEED)
-    // IMPORTANT: If the user background isn't close to A4 aspect, COVER-scaling will look
-    // "zoomed" on page 1 while page 2 (theme A4 bg) looks correct.
-    // So: only use userBackgroundBuf when it is A4-ish; otherwise fall back to theme bg.
-    let bgDrawn = false;
+    // Layer 1: User's background (if provided) - FULL BLEED
     if (userBackgroundBuf) {
       try {
         const isPng = userBackgroundBuf[0] === 0x89 && userBackgroundBuf[1] === 0x50;
@@ -317,10 +313,6 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesTex
         // Scale background to COVER entire page
         const bgAspect = bgImg.width / bgImg.height;
         const pageAspect = a4w / a4h;
-
-        // If it's way off (e.g. square product bg), don't use it for PDF pages.
-        const aspectDiff = Math.abs(bgAspect - pageAspect) / pageAspect;
-        if (aspectDiff > 0.12) throw new Error(`aspect mismatch ${bgAspect.toFixed(3)} vs ${pageAspect.toFixed(3)}`);
         
         let bgW, bgH, bgX, bgY;
         if (bgAspect > pageAspect) {
@@ -336,14 +328,11 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesTex
         }
         
         page.drawImage(bgImg, { x: bgX, y: bgY, width: bgW, height: bgH });
-        bgDrawn = true;
       } catch (e) {
         console.warn('[PDF] User background failed:', e.message);
       }
-    }
-
-    if (!bgDrawn && bgUrl) {
-      // Fallback: theme background (A4 template)
+    } else if (bgUrl) {
+      // Fallback: theme background if no user background
       try {
         const bgBuf = await fetchBuf(bgUrl);
         const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
@@ -1555,41 +1544,108 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
     const { imageUrl, productId, variantId } = req.query;
     const backImageUrl = req.query.backImageUrl;
 
-    const position = {
-      x: req.query.x ? parseFloat(req.query.x) : 0.5,
-      y: req.query.y ? parseFloat(req.query.y) : 0.5,
-      scale: req.query.scale ? parseFloat(req.query.scale) : 1,
-      angle: req.query.angle ? parseFloat(req.query.angle) : 0,
-    };
-    const backPosition = {
-      x: req.query.x ? parseFloat(req.query.x) : 0.5,
-      y: req.query.y ? parseFloat(req.query.y) : 0.5,
-      scale: req.query.scale ? parseFloat(req.query.scale) : 1,
-      angle: req.query.angle ? parseFloat(req.query.angle) : 0,
-    };
-
     if (!imageUrl || !productId || !variantId) {
       return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
     }
 
-    // 0) Snapshot current images so we can return only the new mockups
+    const num = (v, d) => {
+      const n = parseFloat(v);
+      return Number.isFinite(n) ? n : d;
+    };
+
+    // Front placement (defaults centered)
+    const position = {
+      x: num(req.query.x, 0.5),
+      y: num(req.query.y, 0.5),
+      scale: num(req.query.scale, 1),
+      angle: num(req.query.angle, 0),
+    };
+
+    // Optional back placement overrides (falls back to front if not provided)
+    const backPosition = {
+      x: num(req.query.backX, position.x),
+      y: num(req.query.backY, position.y),
+      scale: num(req.query.backScale, position.scale),
+      angle: num(req.query.backAngle, position.angle),
+    };
+
+    const vId = Number(variantId);
+
+    // 0) Snapshot current product (images + variant list) so we can return only the new mockups
     const before = await fetchProduct(productId);
     const beforeSrcs = new Set((before?.images || []).map(i => i?.src).filter(Boolean));
-    
-    // 1. Upload the crossword image
-    const uploaded = await uploadImageFromUrl(imageUrl);
+
+    // Hard safety: variant must belong to product (prevents wrong mockups / wrong bp+pp)
+    const beforeVariants = Array.isArray(before?.variants) ? before.variants : [];
+    if (!beforeVariants.some(v => Number(v?.id) === vId)) {
+      return res.status(400).json({
+        error: 'Variant does not belong to productId',
+        productId: String(productId),
+        variantId: vId
+      });
+    }
+
+    const blueprintId = Number(before?.blueprint_id);
+    const printProviderId = Number(before?.print_provider_id);
+
+    // 1) Upload FRONT (+ optional BACK) image(s)
+    const uploadedFront = await uploadImageFromUrl(imageUrl);
     let uploadedBack = null;
     if (backImageUrl) {
       uploadedBack = await uploadImageFromUrl(backImageUrl);
     }
 
-    if (uploadedBack?.id) {
-      await applyImagesToProductDual(productId, parseInt(variantId), uploaded.id, uploadedBack.id, position, backPosition);
-    } else {
-      await applyImageToProduct(productId, parseInt(variantId), uploaded.id, position);
+    // 2) Contain-fit clamp scales using REAL Printify catalog placeholder sizes.
+    //    This makes your on-site preview match what Printify will actually render.
+    const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
+
+    try {
+      const phFront = await getVariantPlaceholderByPos(blueprintId, printProviderId, vId, 'front');
+      position.scale = clampContainScale({
+        Aw: phFront?.width,
+        Ah: phFront?.height,
+        Iw: uploadedFront?.width,
+        Ih: uploadedFront?.height,
+        requested: (position.scale ?? 1) * FRONT_SCALE_MULT
+      });
+    } catch (e) {
+      console.warn('[preview-product] contain-fit clamp failed (front):', e?.message || e);
+      position.scale = Math.max(0, Math.min(1, position.scale ?? 1));
     }
 
-    // 3. Poll for mockups (Printify needs a few seconds)
+    if (uploadedBack?.id) {
+      try {
+        const phBack = await getVariantPlaceholderByPos(blueprintId, printProviderId, vId, 'back');
+        backPosition.scale = clampContainScale({
+          Aw: phBack?.width,
+          Ah: phBack?.height,
+          Iw: uploadedBack?.width,
+          Ih: uploadedBack?.height,
+          requested: (backPosition.scale ?? 1)
+        });
+      } catch (e) {
+        console.warn('[preview-product] contain-fit clamp failed (back):', e?.message || e);
+        backPosition.scale = Math.max(0, Math.min(1, backPosition.scale ?? 1));
+      }
+    } else {
+      backPosition.scale = Math.max(0, Math.min(1, backPosition.scale ?? 1));
+    }
+
+    // 3) Apply to product (updates mockups in Printify)
+    if (uploadedBack?.id) {
+      await applyImagesToProductDual(
+        productId,
+        parseInt(variantId, 10),
+        uploadedFront.id,
+        uploadedBack.id,
+        position,
+        backPosition
+      );
+    } else {
+      await applyImageToProduct(productId, parseInt(variantId, 10), uploadedFront.id, position);
+    }
+
+    // 4) Poll for mockups (Printify needs a few seconds)
     let product;
     for (let attempt = 1; attempt <= 10; attempt++) {
       product = await fetchProduct(productId);
@@ -1598,26 +1654,39 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
       await new Promise(r => setTimeout(r, 1200)); // ~12s max
     }
 
-    // 4) Delta: only new images (prefer images tagged with this variant)
+    // 5) Delta: only new images (prefer images tagged with this variant)
     const afterImgs = Array.isArray(product?.images) ? product.images : [];
     const deltas = afterImgs.filter(i => i?.src && !beforeSrcs.has(i.src));
-    const vId = Number(variantId);
     const tagged = deltas.filter(i => {
       const ids = Array.isArray(i.variant_ids) ? i.variant_ids.map(Number) : null;
       return !ids || ids.includes(vId);
     });
+
     const imgs = (tagged.length ? tagged : deltas).map(i => i.src).filter(Boolean);
-    // keep newest-first for client
     const imgsNewestFirst = imgs.slice().reverse();
 
-    // also return the hero so the client can drop it
     const heroSrc = before?.images?.[0]?.src || null;
-    res.json({ success: true, uploadedImage: uploaded, product, imgs: imgsNewestFirst, heroSrc });
+
+    res.json({
+      success: true,
+      uploadedImage: uploadedFront,
+      uploadedBackImage: uploadedBack,
+      product,
+      imgs: imgsNewestFirst,
+      heroSrc,
+      debug: {
+        blueprintId,
+        printProviderId,
+        position,
+        backPosition
+      }
+    });
   } catch (err) {
     console.error("❌ Preview generation failed:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // [ADD] Return Printify placeholder box (width/height) for a variant and position
 // PAYLOAD:
