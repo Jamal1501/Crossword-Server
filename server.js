@@ -142,6 +142,68 @@ function getSelectorImageForProduct(themeKey, printifyProductId) {
   return { primary: image, gallery };
 }
 
+// Pick the correct theme key for BOTH:
+// 1) product filtering (Shopify collection handle upsell-<themeKey>)
+// 2) selector-images.json lookups (cover images)
+//
+// Priority:
+// - explicit query: ?theme= / ?market= / ?page= / ?occasion=
+// - infer from Referer path segment (Shopify page slug)
+// - optionally add locale suffix (-de/-fr/-nl) if it exists in selector-images.json
+function _normalizeThemeKey(v) {
+  return String(v || '').trim().toLowerCase().replace(/_/g, '-');
+}
+
+function _inferThemeFromReferer(req) {
+  const ref = req.get('referer') || '';
+  if (!ref) return '';
+  try {
+    const u = new URL(ref);
+    const segs = (u.pathname || '').split('/').filter(Boolean);
+    const last = segs[segs.length - 1] || '';
+    return _normalizeThemeKey(last);
+  } catch (e) {
+    return '';
+  }
+}
+
+function _inferLang(req) {
+  const q = _normalizeThemeKey(req.query.lang || req.query.locale || req.query.language);
+  if (q) return q.slice(0, 2);
+  const al = String(req.headers['accept-language'] || '');
+  const m = al.match(/\b(de|fr|nl)\b/i);
+  return m ? m[1].toLowerCase() : '';
+}
+
+function pickThemeKey(req) {
+  const explicit =
+    _normalizeThemeKey(req.query.theme || req.query.market || req.query.page || req.query.occasion || req.query.themeKey);
+
+  let key = explicit || _inferThemeFromReferer(req) || 'default';
+  if (!key) key = 'default';
+
+  // 1) exact match
+  if (selectorImages && selectorImages[key]) return key;
+
+  // 2) append locale suffix if not present and key exists
+  const hasLocale = /-(de|fr|nl)$/.test(key);
+  if (!hasLocale) {
+    const lang = _inferLang(req);
+    if (lang) {
+      const cand = `${key}-${lang}`;
+      if (selectorImages && selectorImages[cand]) return cand;
+    }
+  }
+
+  // 3) strip locale suffix if it exists
+  const stripped = key.replace(/-(de|fr|nl)$/, '');
+  if (selectorImages && selectorImages[stripped]) return stripped;
+
+  return key;
+}
+
+
+
 // ======================= CLIENT CONFIG ROUTE =========================
 app.get('/apps/crossword/config', (req, res) => {
   const postcardVariantId = process.env.POSTCARD_SHOPIFY_VARIANT_ID || '';
@@ -1483,7 +1545,7 @@ app.get('/apps/crossword/products', async (req, res) => {
   try {
     const DEFAULT_AREA = { width: 800, height: 500, top: 50, left: 50 };
 
-    const themeKey = String(req.query.theme || 'default').toLowerCase();
+    const themeKey = pickThemeKey(req);
     const allowedShopifyVariantIds = await getAllowedShopifyVariantIdsForTheme(themeKey);
 
     // 0) Reverse variantMap: printifyVid -> [shopifyVid...]
