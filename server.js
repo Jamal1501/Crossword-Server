@@ -88,6 +88,60 @@ try {
   console.warn('ℹ️ No print-areas.json at', PRINT_AREAS_PATH, '→ fallback:', err.message);
 }
 
+
+// --- load selector images for product picker (prevents customer image leakage) ---
+const SELECTOR_IMAGES_PATH = path.join(__dirname, 'selector-images.json');
+
+// A safe fallback that NEVER contains customer artwork.
+// If a product is missing from selector-images.json, the picker will show this placeholder instead of Printify mockups.
+const SAFE_SELECTOR_PLACEHOLDER = (() => {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#f2f2f2"/>
+          <stop offset="1" stop-color="#e6e6e6"/>
+        </linearGradient>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#g)"/>
+      <rect x="40" y="40" width="720" height="520" rx="28" ry="28" fill="#ffffff" opacity="0.9"/>
+      <text x="50%" y="48%" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="40" fill="#111">LoveFrames</text>
+      <text x="50%" y="56%" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#555">Product preview</text>
+    </svg>
+  `.trim();
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+})();
+
+let selectorImages = {};
+try {
+  const json = await fs.readFile(SELECTOR_IMAGES_PATH, 'utf-8');
+  selectorImages = JSON.parse(json);
+  console.log('✅ Loaded selector-images.json from', SELECTOR_IMAGES_PATH);
+} catch (err) {
+  console.warn('ℹ️ No selector-images.json at', SELECTOR_IMAGES_PATH, '→ using placeholders:', err.message);
+}
+
+function getSelectorImageForProduct(themeKey, printifyProductId) {
+  const pid = String(printifyProductId || '');
+  if (!pid) return null;
+
+  const theme = (selectorImages && selectorImages[themeKey]) || null;
+  const def   = (selectorImages && selectorImages.default) || null;
+
+  const entry = (theme?.products && theme.products[pid]) || (def?.products && def.products[pid]) || null;
+  if (!entry || typeof entry !== 'object') return null;
+
+  const primary = (typeof entry.primary === 'string' && entry.primary.trim()) ? entry.primary.trim() : '';
+  const gallery = Array.isArray(entry.gallery)
+    ? entry.gallery.filter(x => typeof x === 'string' && x.trim()).map(x => x.trim())
+    : [];
+
+  const image = primary || gallery[0] || '';
+  if (!image) return null;
+
+  return { primary: image, gallery };
+}
+
 // ======================= CLIENT CONFIG ROUTE =========================
 app.get('/apps/crossword/config', (req, res) => {
   const postcardVariantId = process.env.POSTCARD_SHOPIFY_VARIANT_ID || '';
@@ -1429,7 +1483,7 @@ app.get('/apps/crossword/products', async (req, res) => {
   try {
     const DEFAULT_AREA = { width: 800, height: 500, top: 50, left: 50 };
 
-    const themeKey = String(req.query.theme || 'default');
+    const themeKey = String(req.query.theme || 'default').toLowerCase();
     const allowedShopifyVariantIds = await getAllowedShopifyVariantIdsForTheme(themeKey);
 
     // 0) Reverse variantMap: printifyVid -> [shopifyVid...]
@@ -1445,7 +1499,10 @@ app.get('/apps/crossword/products', async (req, res) => {
 
     const out = [];
     for (const p of pifyProducts) {
-      const img = (p.images && p.images[0]?.src) || '';
+      // NOTE: NEVER use Printify mockup images for selector thumbnails (they can contain the last customer's upload).
+      const selector = getSelectorImageForProduct(themeKey, p.id);
+      const img = (selector && selector.primary) ? selector.primary : SAFE_SELECTOR_PLACEHOLDER;
+      const gallery = (selector && selector.gallery) ? selector.gallery : [];
 
       // mapped variants only
       let mappedVariants = (p.variants || []).filter(v => rev[String(v.id)] && rev[String(v.id)][0]);
@@ -1500,7 +1557,8 @@ app.get('/apps/crossword/products', async (req, res) => {
         optionNames: [],
         handle: '',
         image: img,
-        shopifyVariantId: String(firstShopifyVid || ''),
+        gallery: gallery,
+shopifyVariantId: String(firstShopifyVid || ''),
         printifyProductId: p.id,
         variantId: firstShopifyVid ? Number(firstShopifyVid) : null,
         price: parseFloat(pref.price) || 0,
@@ -1738,6 +1796,10 @@ app.get('/api/printify/products', async (req, res) => {
         'User-Agent': 'Crossword-Preview/1.0'
       },
     });
+    // Redact mockup image URLs (may contain customer uploads)
+    if (products && Array.isArray(products.data)) {
+      products.data = products.data.map(p => ({ ...p, images: [] }));
+    }
     res.json(products);
   } catch (err) {
     console.error('Error fetching products:', err.message);
@@ -1752,6 +1814,11 @@ app.get('/admin/printify/published-products', async (req, res) => {
     // implement listPublishedProducts to call Printify:
     // GET /v1/shops/:shop_id/products.json?status=published&limit=100
     const out = await listPublishedProducts({ status: 'published', limit: 100 });
+    // Redact mockup image URLs (may contain customer uploads)
+    if (out && Array.isArray(out.data)) {
+      out.data = out.data.map(p => ({ ...p, images: [] }));
+    }
+
     res.json(out);
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
@@ -1770,6 +1837,8 @@ app.get('/api/printify/products/:productId', async (req, res) => {
         'User-Agent': 'Crossword-Preview/1.0'
       },
     });
+    // Redact mockup image URLs (may contain customer uploads)
+    if (data && Array.isArray(data.images)) data.images = [];
     res.json(data);
   } catch (err) {
     console.error('❌ Failed to fetch product:', err.message);
@@ -2164,7 +2233,7 @@ app.all('/preview-pdf', async (req, res) => {
       // --- Tweak these if you want ---
       const WM_TEXT   = 'LOVEFRAMES';
       const WM_SIZE   = 14;     // small text size
-      const WM_OPAC   = 0.40;   // subtle opacity
+      const WM_OPAC   = 0.28;   // subtle opacity
       const WM_ANGLE  = 30;     // degrees
       const STEP_X    = 140;    // horizontal spacing between repeats
       const STEP_Y    = 110;    // vertical spacing between repeats
