@@ -8,6 +8,178 @@
           "https://YOUR_CDN/default/tote-person-back.jpg",
           "https://YOUR_CDN/default/tote-front-flat.jpg"
         ]
+      },
+      "697b343f0a338215d90f8020": {
+        "primary": "https://YOUR_CDN/default/697b343f0a338215d90f8020.jpg",
+        "gallery": []
+      },
+      "697b343e0a338215d90f801f": {
+        "primary": "https://YOUR_CDN/default/697b343e0a338215d90f801f.jpg",
+        "gallery": []
+      },
+      "697b319abcf52e6ee30e1e1b": {
+        "primary": "https://YOUR_CDN/default/697b319abcf52e6ee30e1e1b.jpg",
+        "gallery": []
+      },
+      "697b2ed80505b2be1e05fca5": {
+        "primary": "https://YOUR_CDN/default/697b2ed80505b2be1e05fca5.jpg",
+        "gallery": []
+      },
+      "697b2ed60505b2be1e05fca3": {
+        "primary": "https://YOUR_CDN/default/697b2ed60505b2be1e05fca3.jpg",
+        "gallery": []
+      },
+      "6979ddc2761a122a0505db0c": {
+        "primary": "https://YOUR_CDN/default/6979ddc2761a122a0505db0c.jpg",
+        "gallery": []
+      },
+      "697862ffe16bdd27360e4282": {
+        "primary": "https://YOUR_CDN/default/697862ffe16bdd27360e4282.jpg",
+        "gallery": []
+      },
+      "6976ac71a5ec94f0ae06f961": {
+        "primary": "https://YOUR_CDN/default/6976ac71a5ec94f0ae06f961.jpg",
+        "gallery": []
+      },
+      "69767f49066bf21098028bee": {
+        "primary": "https://YOUR_CDN/default/69767f49066bf21098028bee.jpg",
+        "gallery": []
+      },
+      "6976444378815057e40cf48d": {
+        "primary": "https://YOUR_CDN/default/6976444378815057e40cf48d.jpg",
+        "gallery": []
+      },
+      "69764338066bf21098027f89": {
+        "primary": "https://YOUR_CDN/default/69764338066bf21098027f89.jpg",
+        "gallery": []
+      },
+      "69762199066bf2109802782e": {
+        "primary": "https://YOUR_CDN/default/69762199066bf2109802782e.jpg",
+        "gallery": []
+      },
+      "69760f4f0bbca1b9320e09b6": {
+        "primary": "https://YOUR_CDN/default/69760f4f0bbca1b9320e09b6.jpg",
+        "gallery": []
+      },
+      "69760e3ba423f63fd50fcac5": {
+        "primary": "https://YOUR_CDN/default/69760e3ba423f63fd50fcac5.jpg",
+        "gallery": []
+      },
+      "69760b7e31edea07590a1197": {
+        "primary": "https://YOUR_CDN/default/69760b7e31edea07590a1197.jpg",
+        "gallery": []
+      },
+      "6975fbed33cf6f1dc80707df": {
+        "primary": "https://YOUR_CDN/default/6975fbed33cf6f1dc80707df.jpg",
+        "gallery": []
+      },
+      "6975f7e7e2dbd615bc01a645": {
+        "primary": "https://YOUR_CDN/default/6975f7e7e2dbd615bc01a645.jpg",
+        "gallery": []
+      },
+      "6975e89731edea07590a090b": {
+        "primary": "https://YOUR_CDN/default/6975e89731edea07590a090b.jpg",
+        "gallery": []
+      },
+      "69733fc04e674374ba041472": {
+        "primary": "https://YOUR_CDN/default/69733fc04e674374ba041472.jpg",
+        "gallery": []
+      },
+      "6971f3a51dbe85f4290d1bd9": {
+        "primary": "https://YOUR_CDN/default/6971f3a51dbe85f4290d1bd9.jpg",
+        "gallery": []
+      },
+      "6971f29f1dbe85f4290d1b84": {
+        "primary": "https://YOUR_CDN/default/6971f29f1dbe85f4290d1b84.jpg",
+        "gallery": []
+      },
+      "6954868f10e970af26090bcc": {
+        "primary": "https://YOUR_CDN/default/6954868f10e970af26090bcc.jpg",
+        "gallery": []
+      },
+      "69284edc7eedbbe63d04fe42": {
+        "primary": "https://YOUR_CDN/default/69284edc7eedbbe63d04fe42.jpg",
+        "gallery": []
+      },
+      "6915a13c542a38eb74091fea": {
+        "primary": "https://YOUR_CDN/default/6915a13c542a38eb74091fea.jpg",
+        "gallery": []
+      },
+      "690b20a211566e84f604787b": {
+        "primary": "https://YOUR_CDN/default/690b20a211566e84f604787b.jpg",
+        "gallery": []
+      },
+      "690aed4416bce26c5c0d54a3": {
+        "primary": "https://YOUR_CDN/default/690aed4416bce26c5c0d54a3.jpg",
+        "gallery": []
+      },
+      "690ae3403b9aa26333071311": {
+        "primary": "https://YOUR_CDN/default/690ae3403b9aa26333071311.jpg",
+        "gallery": []
+      },
+      "69029e3104d1075d16006412": {
+        "primary": "https://YOUR_CDN/default/69029e3104d1075d16006412.jpg",
+        "gallery": []
+      },
+      "69029c7b5215b8812f09b8d9": {
+        "primary": "https://YOUR_CDN/default/69029c7b5215b8812f09b8d9.jpg",
+        "gallery": []
+      },
+      "69029b7b6fc6356d4609598b": {
+        "primary": "https://YOUR_CDN/default/69029b7b6fc6356d4609598b.jpg",
+        "gallery": []
+      },
+      "6902996904d1075d160062d9": {
+        "primary": "https://YOUR_CDN/default/6902996904d1075d160062d9.jpg",
+        "gallery": []
+      },
+      "690298c404d1075d160062b9": {
+        "primary": "https://YOUR_CDN/default/690298c404d1075d160062b9.jpg",
+        "gallery": []
+      },
+      "690297a0ebec9f2b3a04801d": {
+        "primary": "https://YOUR_CDN/default/690297a0ebec9f2b3a04801d.jpg",
+        "gallery": []
+      },
+      "690296718f8042c78a0b0f33": {
+        "primary": "https://YOUR_CDN/default/690296718f8042c78a0b0f33.jpg",
+        "gallery": []
+      },
+      "68f8c974481db15d20024536": {
+        "primary": "https://YOUR_CDN/default/68f8c974481db15d20024536.jpg",
+        "gallery": []
+      },
+      "68e74fcb67e086236b017a99": {
+        "primary": "https://YOUR_CDN/default/68e74fcb67e086236b017a99.jpg",
+        "gallery": []
+      },
+      "68e430b2933535a5210aa74c": {
+        "primary": "https://YOUR_CDN/default/68e430b2933535a5210aa74c.jpg",
+        "gallery": []
+      },
+      "68e3e7a52a6809cf3f089f0c": {
+        "primary": "https://YOUR_CDN/default/68e3e7a52a6809cf3f089f0c.jpg",
+        "gallery": []
+      },
+      "68e3e584b4cf2850220a951e": {
+        "primary": "https://YOUR_CDN/default/68e3e584b4cf2850220a951e.jpg",
+        "gallery": []
+      },
+      "68e3d73b627b0fd76a0f6a77": {
+        "primary": "https://YOUR_CDN/default/68e3d73b627b0fd76a0f6a77.jpg",
+        "gallery": []
+      },
+      "68e374c07d5ae1d5840d25c0": {
+        "primary": "https://YOUR_CDN/default/68e374c07d5ae1d5840d25c0.jpg",
+        "gallery": []
+      },
+      "6895fc47409fee92750b18cb": {
+        "primary": "https://YOUR_CDN/default/6895fc47409fee92750b18cb.jpg",
+        "gallery": []
+      },
+      "686d08b2ff350a70ac008d50": {
+        "primary": "https://YOUR_CDN/default/686d08b2ff350a70ac008d50.jpg",
+        "gallery": []
       }
     }
   },
