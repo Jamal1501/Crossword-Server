@@ -1813,37 +1813,14 @@ if (safeBackImageUrl) {
     //    This makes your on-site preview match what Printify will actually render.
     const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
 
-    try {
-      const phFront = await getVariantPlaceholderByPos(blueprintId, printProviderId, vId, 'front');
-      position.scale = clampContainScale({
-        Aw: phFront?.width,
-        Ah: phFront?.height,
-        Iw: uploadedFront?.width,
-        Ih: uploadedFront?.height,
-        requested: (position.scale ?? 1) * FRONT_SCALE_MULT
-      });
-    } catch (e) {
-      console.warn('[preview-product] contain-fit clamp failed (front):', e?.message || e);
-      position.scale = Math.max(0, Math.min(1, position.scale ?? 1));
-    }
+// IMPORTANT: Do NOT contain-clamp in preview.
+// Printify preview must receive the raw scale & center,
+// otherwise we double-contain and slice the image.
+position.scale = Math.max(0.05, Math.min(2, position.scale ?? 1));
 
-    if (uploadedBack?.id) {
-      try {
-        const phBack = await getVariantPlaceholderByPos(blueprintId, printProviderId, vId, 'back');
-        backPosition.scale = clampContainScale({
-          Aw: phBack?.width,
-          Ah: phBack?.height,
-          Iw: uploadedBack?.width,
-          Ih: uploadedBack?.height,
-          requested: (backPosition.scale ?? 1)
-        });
-      } catch (e) {
-        console.warn('[preview-product] contain-fit clamp failed (back):', e?.message || e);
-        backPosition.scale = Math.max(0, Math.min(1, backPosition.scale ?? 1));
-      }
-    } else {
-      backPosition.scale = Math.max(0, Math.min(1, backPosition.scale ?? 1));
-    }
+
+backPosition.scale = Math.max(0.05, Math.min(2, backPosition.scale ?? position.scale));
+
 
     // 3) Apply to product (updates mockups in Printify)
     if (uploadedBack?.id) {
