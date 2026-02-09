@@ -369,23 +369,39 @@ function hasMeaningfulCluesText(cluesText = '') {
 
   const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
 
-  // Strip headings
-  const content = lines.filter(l => !/^(across|down|crossword clues)$/i.test(l));
-  if (!content.length) return false;
+  for (const raw of lines) {
+    // ignore section headers
+    if (/^(across|down|crossword clues)$/i.test(raw)) continue;
 
-  for (const line of content) {
-    const stripped = line.replace(/^\s*\d+\s*[\.\)\:\-–—]\s*/, '').trim();
-    if (!stripped) continue;
+    // strip numbering like "12. " or "12) "
+    const line = raw.replace(/^\s*\d+\s*[\.\)]\s*/, '').trim();
+    if (!line) continue;
 
-    // Lowercase/punctuation/3+ words => likely clue sentence (not raw answer)
-    if (/[a-zäöüß]/.test(stripped)) return true;
-    if (/[\?\!\"\'\,\;]/.test(stripped)) return true;
+    // If line contains a separator, require REAL text on the right side
+    // Examples:
+    // "PARIS -"   => false
+    // "PARIS -" + " " => false
+    // "PARIS - Capital of France" => true
+    const m = line.match(/^(.+?)(?:\s*[-:–—]\s*)(.*)$/);
+    if (m) {
+      const right = String(m[2] || '')
+        .replace(/^[\-:–—\s]+/, '')   // remove leading separators/spaces
+        .trim();
 
-    const wc = stripped.split(/\s+/).filter(Boolean).length;
-    if (wc >= 3) return true;
+      // must contain letters (not just punctuation)
+      if (/[a-zA-Zäöüß]/.test(right) && right.length >= 2) return true;
+      continue;
+    }
+
+    // If no separator exists, only count it as meaningful if it looks like a clue sentence
+    // (has lowercase letters) — prevents "PARIS" from counting as a clue
+    if (/[a-zäöüß]/.test(line)) return true;
   }
+
   return false;
 }
+
+
 
 // Optional brand assets loader (logo + font)
 async function prepareBrandAssets(pdf) {
@@ -887,11 +903,13 @@ async function handlePrintifyOrder(order) {
     const area = printAreas?.[shopifyVid] || null;
 
     // --- finally, call createOrder (legacy) OR collect for batch ---
-   const hasClues = hasMeaningfulCluesText(item.cluesText || '');
-const backImageUrl =
-  (item.clue_output_mode === 'back' && item.clues_image_url && hasClues)
-    ? item.clues_image_url
-    : undefined;
+const hasClues = hasMeaningfulCluesText(item.cluesText || '');
+
+let backImageUrl = undefined;
+if (item.clue_output_mode === 'back' && hasClues && item.clues_image_url) {
+  backImageUrl = item.clues_image_url;
+}
+
 
     if (!BATCH_MODE) {
       // Legacy per-item order (unchanged)
@@ -1736,6 +1754,10 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
     const { imageUrl, productId, variantId } = req.query;
     const backImageUrl = req.query.backImageUrl;
 
+    const cluesText = String(req.query.cluesText || '').trim();
+const hasClues = hasMeaningfulCluesText(cluesText);
+const safeBackImageUrl = (backImageUrl && hasClues) ? backImageUrl : null;
+
     if (!imageUrl || !productId || !variantId) {
       return res.status(400).json({ error: "Missing required params: imageUrl, productId, variantId" });
     }
@@ -1783,9 +1805,9 @@ app.get('/apps/crossword/preview-product', async (req, res) => {
     // 1) Upload FRONT (+ optional BACK) image(s)
     const uploadedFront = await uploadImageFromUrl(imageUrl);
     let uploadedBack = null;
-    if (backImageUrl) {
-      uploadedBack = await uploadImageFromUrl(backImageUrl);
-    }
+if (safeBackImageUrl) {
+  uploadedBack = await uploadImageFromUrl(safeBackImageUrl);
+}
 
     // 2) Contain-fit clamp scales using REAL Printify catalog placeholder sizes.
     //    This makes your on-site preview match what Printify will actually render.
