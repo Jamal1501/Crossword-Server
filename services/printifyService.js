@@ -203,20 +203,21 @@ export async function resolveBpPpForVariant(variantId) {
    Placeholder helpers (catalog)
 --------------------------- */
 export async function getVariantPlaceholderByPos(blueprintId, printProviderId, variantId, pos = 'front') {
-  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
-  const data = await safeFetch(url, { headers: authHeaders() });
-  const v = data?.variants?.find(v => v.id === parseInt(variantId));
-  const ph = v?.placeholders?.find(p => p.position === pos);
+  const data = await fetchCatalogVariants(Number(blueprintId), Number(printProviderId));
+  const v = data?.variants?.find(v => Number(v?.id) === Number(variantId));
+  const want = String(pos || 'front').toLowerCase();
+  const ph = (v?.placeholders || []).find(p => String(p?.position || '').toLowerCase() === want);
   return ph ? { width: ph.width, height: ph.height } : null;
 }
 
+
 async function getVariantPlaceholder(blueprintId, printProviderId, variantId) {
-  const url = `${BASE_URL}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
-  const data = await safeFetch(url, { headers: authHeaders() });
-  const v = data?.variants?.find(v => v.id === parseInt(variantId));
-  const ph = v?.placeholders?.find(p => p.position === 'front');
+  const data = await fetchCatalogVariants(Number(blueprintId), Number(printProviderId));
+  const v = data?.variants?.find(v => Number(v?.id) === Number(variantId));
+  const ph = (v?.placeholders || []).find(p => p.position === 'front');
   return ph ? { width: ph.width, height: ph.height } : null;
 }
+
 
 async function getVariantPlaceholderNames(blueprintId, printProviderId, variantId) {
   try {
@@ -236,7 +237,7 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId, variantI
 --------------------------- */
 // Allow enlarging to fully contain within the placeholder box
 // (Printify expects 0..1; clamp the final!)
-export function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
+export function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1, mode = 'multiplier' }) {
   // Printify "scale" is width-relative: designWidth = scale * areaWidth.
   // To guarantee contain-fit (no cropping), cap requested to [0..1], then
   // multiply by the maximum safe contain factor for this (areaAspect, imageAspect).
@@ -246,7 +247,10 @@ export function clampContainScale({ Aw, Ah, Iw, Ih, requested = 1 }) {
   if (!Aw || !Ah || !Iw || !Ih) return req01;
 
   const sMax = Math.min(1, (Ah / Aw) * (Iw / Ih)); // maximum contain-fit scale
-  const out  = req01 * sMax; // requested is a multiplier of the safe max
+const modeNorm = String(mode || 'multiplier').toLowerCase();
+const out = (modeNorm === 'absolute')
+  ? Math.min(req01, sMax)   // requested is final Printify scale
+  : (req01 * sMax);         // requested is multiplier of safe max
   return Math.max(0, Math.min(1, out));
 }
 
