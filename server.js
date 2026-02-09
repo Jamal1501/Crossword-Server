@@ -328,13 +328,72 @@ async function fetchBuf(url) {
   return Buffer.from(await r.arrayBuffer());
 }
 
+// ---- Static buffer cache (speeds up PDF preview + delivery) ----
+// Use ONLY for stable, shared assets (logo, font, theme backgrounds).
+const STATIC_BUF_CACHE = new Map(); // url -> { buf: Buffer, exp: number, inflight?: Promise<Buffer> }
+const STATIC_BUF_TTL_MS = Number(process.env.STATIC_BUF_TTL_MS || (6 * 60 * 60 * 1000)); // default 6h
+
+async function fetchStaticBuf(url, { ttlMs = STATIC_BUF_TTL_MS } = {}) {
+  const u = String(url || '').trim();
+  if (!u) throw new Error('fetchStaticBuf: missing url');
+
+  const now = Date.now();
+  const hit = STATIC_BUF_CACHE.get(u);
+
+  if (hit && hit.buf && typeof hit.exp === 'number' && hit.exp > now) return hit.buf;
+  if (hit && hit.inflight) return hit.inflight;
+
+  const inflight = (async () => {
+    const buf = await fetchBuf(u);
+    STATIC_BUF_CACHE.set(u, { buf, exp: now + ttlMs });
+    return buf;
+  })();
+
+  STATIC_BUF_CACHE.set(u, { buf: hit?.buf || null, exp: hit?.exp || 0, inflight });
+
+  try {
+    return await inflight;
+  } finally {
+    const cur = STATIC_BUF_CACHE.get(u);
+    if (cur && cur.inflight === inflight) {
+      delete cur.inflight;
+      STATIC_BUF_CACHE.set(u, cur);
+    }
+  }
+}
+
+// Heuristic: detect whether clue text contains REAL clues (not just answer list)
+function hasMeaningfulCluesText(cluesText = '') {
+  const t = String(cluesText || '').replace(/\r/g, '').trim();
+  if (!t) return false;
+
+  const lines = t.split('\n').map(s => s.trim()).filter(Boolean);
+
+  // Strip headings
+  const content = lines.filter(l => !/^(across|down|crossword clues)$/i.test(l));
+  if (!content.length) return false;
+
+  for (const line of content) {
+    const stripped = line.replace(/^\s*\d+\s*[\.\)\:\-–—]\s*/, '').trim();
+    if (!stripped) continue;
+
+    // Lowercase/punctuation/3+ words => likely clue sentence (not raw answer)
+    if (/[a-zäöüß]/.test(stripped)) return true;
+    if (/[\?\!\"\'\,\;]/.test(stripped)) return true;
+
+    const wc = stripped.split(/\s+/).filter(Boolean).length;
+    if (wc >= 3) return true;
+  }
+  return false;
+}
+
 // Optional brand assets loader (logo + font)
 async function prepareBrandAssets(pdf) {
   const out = { logoImg: null, font: undefined };
   try {
     const logoUrl = process.env.PDF_LOGO_URL || '';
     if (logoUrl) {
-      const buf = await fetchBuf(logoUrl);
+const buf = await fetchStaticBuf(logoUrl);
       out.logoImg = (buf[0] === 0x89 && buf[1] === 0x50) ? await pdf.embedPng(buf) : await pdf.embedJpg(buf);
     }
   } catch (e) {
@@ -343,7 +402,7 @@ async function prepareBrandAssets(pdf) {
   try {
     const fontUrl = process.env.PDF_FONT_URL || '';
     if (fontUrl) {
-      const fbuf = await fetchBuf(fontUrl);
+const fbuf = await fetchStaticBuf(fontUrl);
       out.font = await pdf.embedFont(fbuf);
     }
   } catch (e) {
@@ -450,7 +509,7 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesTex
     } else if (bgUrl) {
       // Fallback: theme background if no user background
       try {
-        const bgBuf = await fetchBuf(bgUrl);
+const bgBuf = await fetchStaticBuf(bgUrl);
         const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
         
         const bgAspect = bgImg.width / bgImg.height;
@@ -498,7 +557,7 @@ async function buildGridAndCluesPdf({ gridBuf, cluesBuf, backgroundBuf, cluesTex
     // background image (theme brand) - FULL BLEED COVER
     if (bgUrl) {
       try {
-        const bgBuf = await fetchBuf(bgUrl);
+const bgBuf = await fetchStaticBuf(bgUrl);
         const bgImg = (bgBuf[0] === 0x89 && bgBuf[1] === 0x50) ? await pdf.embedPng(bgBuf) : await pdf.embedJpg(bgBuf);
         
         const bgAspect = bgImg.width / bgImg.height;
@@ -619,9 +678,13 @@ for (const line of cleanLines) {
     await addImagePage(gridBuf, backgroundBuf, 'Crossword Grid', pageIndex);
     pageIndex++;
   }
-
-  // CLUES page (text preferred, else image)
+  
+// CLUES page — only if meaningful clue text exists
+const hasCluesOutput = hasMeaningfulCluesText(cluesText);
+if (hasCluesOutput) {
   await addCluesPage({ cluesBuf, cluesText, pageIndex, scale: opts.scale || 1 });
+}
+
 
   return Buffer.from(await pdf.save());
 }
@@ -709,6 +772,11 @@ async function handlePrintifyOrder(order) {
     const clue_output_mode  = getProp('_clue_output');       // 'back' | 'postcard' | 'none'
     const design_specs_raw  = getProp('_design_specs');
     const design_specs = design_specs_raw ? (() => { try { return JSON.parse(design_specs_raw); } catch { return null; } })() : null;
+    const explicitCluesText = getProp('_clues_text') || '';
+    const cluesText =
+  (design_specs && String(design_specs.clues_text || '').trim())
+  || String(explicitCluesText || '').trim()
+  || '';
 
     return {
       title: li.title,
@@ -717,6 +785,7 @@ async function handlePrintifyOrder(order) {
       quantity: li.quantity || 1,
       custom_image,
       clues_image_url,
+      cluesText,
       clue_output_mode,
       design_specs
     };
@@ -818,8 +887,11 @@ async function handlePrintifyOrder(order) {
     const area = printAreas?.[shopifyVid] || null;
 
     // --- finally, call createOrder (legacy) OR collect for batch ---
-    const backImageUrl =
-      item.clue_output_mode === 'back' && item.clues_image_url ? item.clues_image_url : undefined;
+   const hasClues = hasMeaningfulCluesText(item.cluesText || '');
+const backImageUrl =
+  (item.clue_output_mode === 'back' && item.clues_image_url && hasClues)
+    ? item.clues_image_url
+    : undefined;
 
     if (!BATCH_MODE) {
       // Legacy per-item order (unchanged)
