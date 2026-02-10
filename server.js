@@ -1809,17 +1809,31 @@ if (safeBackImageUrl) {
   uploadedBack = await uploadImageFromUrl(safeBackImageUrl);
 }
 
-    // 2) Contain-fit clamp scales using REAL Printify catalog placeholder sizes.
-    //    This makes your on-site preview match what Printify will actually render.
-    const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
+const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
+const NOBG_SCALE_SHRINK = Math.max(0.90, Math.min(1, Number(process.env.NOBG_SCALE_SHRINK || 0.985)));
 
-// IMPORTANT: Do NOT contain-clamp in preview.
-// Printify preview must receive the raw scale & center,
-// otherwise we double-contain and slice the image.
-position.scale = Math.max(0.05, Math.min(2, position.scale ?? 1));
+const isComposite = (typeof imageUrl === 'string' && /\/crosswords_final\//i.test(imageUrl));
+const shrink = isComposite ? 1 : NOBG_SCALE_SHRINK;
 
+// 2) Clamp + contain-fit using real placeholder dims (prevents cropping)
+let phFront = null;
+try {
+  phFront = await getVariantPlaceholderByPos(blueprintId, printProviderId, vId, 'front');
+} catch {}
 
-backPosition.scale = Math.max(0.05, Math.min(2, backPosition.scale ?? position.scale));
+const requestedFront = (position?.scale ?? 1) * FRONT_SCALE_MULT * shrink;
+
+position.scale = clampContainScale({
+  Aw: phFront?.width,
+  Ah: phFront?.height,
+  Iw: uploadedFront?.width,
+  Ih: uploadedFront?.height,
+  requested: requestedFront
+});
+
+// Hard clamp for safety
+position.scale = Math.max(0, Math.min(1, position.scale));
+
 
 
     // 3) Apply to product (updates mockups in Printify)
