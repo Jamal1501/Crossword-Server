@@ -683,7 +683,16 @@ export async function createOrder({
 
   // 4) Contain-fit scale for FRONT (avoid clipping)
   const FRONT_SCALE_MULT = Number(process.env.FRONT_SCALE_MULT || 1.0);
-  let requestedFrontScale = (position?.scale ?? 1) * FRONT_SCALE_MULT;
+const NOBG_SCALE_SHRINK = Math.max(0.90, Math.min(1, Number(process.env.NOBG_SCALE_SHRINK || 0.985)));
+
+// Detect merged composite (background committed) vs raw crossword
+const isComposite =
+  (typeof imageUrl === 'string' && /\/crosswords_final\//i.test(imageUrl)) ||
+  (meta?.hasBackground === true);
+
+const shrink = isComposite ? 1 : NOBG_SCALE_SHRINK;
+
+let requestedFrontScale = (position?.scale ?? 1) * FRONT_SCALE_MULT * shrink;
   let finalScale = requestedFrontScale;
   try {
     const ph = await getVariantPlaceholder(blueprintId, printProviderId, parseInt(variantId));
