@@ -1132,11 +1132,6 @@ const bgUrl =
   getProp('_background_image') ||
   rec?.backgroundImage;
 
-const cluesUrl =
-  getProp('_clues_image_url') ||
-  rec?.cluesImage;
-
-
   const cluesUrl = rec?.cluesImage || getProp('_clues_image_url');
 
   const designSpecsRaw = getProp('_design_specs') || '';
