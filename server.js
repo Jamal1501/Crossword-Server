@@ -1266,45 +1266,7 @@ deliverables.push({
   });
 
   console.log(`📧 Sent ONE email to ${to} (attachments=${attachments.length}, links=${links.length})`);
-else {
-    // Links mode (>3): NO attachments, just tokenized downloads
-    const base = getPublicBaseUrl(req);
-    const links = [];
 
-    for (let i = 0; i < deliverables.length; i++) {
-      const d = deliverables[i];
-
-      // You already have token logic; reuse it (order-bound)
-      const token = issuePdfToken(d.pid, orderId);
-
-      const url =
-        `${base}/apps/crossword/download-pdf` +
-        `?puzzleId=${encodeURIComponent(d.pid)}` +
-        `&token=${encodeURIComponent(token)}`;
-
-      links.push({ index: i + 1, url });
-    }
-
-    if (!links.length) {
-      console.warn('No links could be built for links mode.');
-      return res.status(200).send('Webhook received (no links built)');
-    }
-
-    await sendEmailViaResend({
-      to,
-      subject,
-      html: `
-        <p>${instantVsShippingLine}</p>
-        <p>Your crosswords are ready:</p>
-        <ul>
-          ${links.map(l => `<li>Crossword ${l.index} – <a href="${l.url}">Download</a></li>`).join('')}
-        </ul>
-      `,
-      attachments: [] // explicitly none
-    });
-
-    console.log(`📧 Sent ONE links email with ${links.length} download link(s) to ${to}`);
-  }
 } catch (e) {
     console.error('❌ multi-pdf email delivery failed:', e);
   }
