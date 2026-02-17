@@ -1172,42 +1172,52 @@ deliverables.push({
   }
 
   // 2) Decide delivery mode (your required cutoff)
-  const deliveryMode = (deliverables.length <= 3) ? 'attachments' : 'links';
+  // 2) Deliver in ONE email:
+  // Attach up to 3 PDFs (keeps payload sane), and include download links for the rest.
+  // Resend caps attachments payload (after base64) — so links are the scalable path.
+  const ATTACH_LIMIT = 3;
 
   const subject = 'Your crosswords are ready';
   const instantVsShippingLine =
     'Your PDFs are ready instantly — your printed products will arrive separately.';
 
-  if (deliveryMode === 'attachments') {
-    // Build ALL PDFs (<=3), attach all in ONE email
-    const attachments = [];
+  const base = getPublicBaseUrl(req);
+  const attachments = [];
+  const links = [];
 
-    for (let i = 0; i < deliverables.length; i++) {
-      const d = deliverables[i];
+  for (let i = 0; i < deliverables.length; i++) {
+    const d = deliverables[i];
 
-      // fetch image buffers (if present)
-const [gridBuf, cluesBuf, backgroundBuf] = await Promise.all([
-  d.gridUrl ? fetchBuf(d.gridUrl) : Promise.resolve(null),
-  d.cluesUrl ? fetchBuf(d.cluesUrl) : Promise.resolve(null),
-  d.bgUrl ? fetchBuf(d.bgUrl) : Promise.resolve(null),
-]);
+    const token = issuePdfToken(d.pid, orderId);
+    const url =
+      `${base}/apps/crossword/download-pdf` +
+      `?puzzleId=${encodeURIComponent(d.pid)}` +
+      `&token=${encodeURIComponent(token)}`;
 
+    // Try to attach until we reach the limit; everything else becomes a link.
+    const shouldAttach = attachments.length < ATTACH_LIMIT;
 
-      // Build unified PDF (grid + clues). If cluesText is present, typeset it; otherwise it falls back to embedding cluesBuf.
-      let pdfBuffer;
+    if (shouldAttach) {
       try {
-pdfBuffer = await buildGridAndCluesPdf({
-  gridBuf: gridBuf || undefined,
-  backgroundBuf: backgroundBuf || undefined, // ✅ NEW
-  cluesBuf: cluesBuf || undefined,
-  cluesText: d.cluesText || '',
-  puzzleId: d.pid,
-  opts: { scale: d.computedScale, themeKey: d.themeKey || 'default' }
-});
-      } catch (e) {
-        console.error(`❌ buildGridAndCluesPdf failed for puzzle ${d.pid}:`, e);
-        // fallback: images only
+        const [gridBuf, cluesBuf, backgroundBuf] = await Promise.all([
+          d.gridUrl ? fetchBuf(d.gridUrl) : Promise.resolve(null),
+          d.cluesUrl ? fetchBuf(d.cluesUrl) : Promise.resolve(null),
+          d.bgUrl ? fetchBuf(d.bgUrl) : Promise.resolve(null),
+        ]);
+
+        let pdfBuffer;
         try {
+          pdfBuffer = await buildGridAndCluesPdf({
+            gridBuf: gridBuf || undefined,
+            backgroundBuf: backgroundBuf || undefined,
+            cluesBuf: cluesBuf || undefined,
+            cluesText: d.cluesText || '',
+            puzzleId: d.pid,
+            opts: { scale: d.computedScale, themeKey: d.themeKey || 'default' }
+          });
+        } catch (e) {
+          console.error(`❌ buildGridAndCluesPdf failed for puzzle ${d.pid}:`, e);
+          // fallback: images only (no background)
           pdfBuffer = await buildGridAndCluesPdf({
             gridBuf: gridBuf || undefined,
             cluesBuf: cluesBuf || undefined,
@@ -1215,36 +1225,48 @@ pdfBuffer = await buildGridAndCluesPdf({
             puzzleId: d.pid,
             opts: { scale: d.computedScale, themeKey: d.themeKey || 'default' }
           });
-        } catch (ee) {
-          console.error('❌ Fallback PDF generation also failed:', ee);
-          continue;
         }
+
+        attachments.push({
+          filename: `Crossword ${i + 1}.pdf`,
+          content: pdfBuffer.toString('base64'),
+          contentType: 'application/pdf'
+        });
+
+        // No link needed for attached ones (only "the other PDFs")
+        continue;
+      } catch (e) {
+        console.error(`❌ Attachment PDF build failed for puzzle ${d.pid}:`, e);
+        // If attachment fails, fall back to link
       }
-
-      attachments.push({
-        filename: `Crossword ${i + 1}.pdf`,
-        content: pdfBuffer.toString('base64'),
-        contentType: 'application/pdf'
-      });
     }
 
-    if (!attachments.length) {
-      console.warn('No PDFs could be generated for attachments mode.');
-      return res.status(200).send('Webhook received (no pdfs built)');
-    }
+    links.push({ index: i + 1, url });
+  }
 
-    await sendEmailViaResend({
-      to,
-      subject,
-      html: `
-        <p>${instantVsShippingLine}</p>
-        <p>Attached: ${attachments.length} PDF(s)</p>
-      `,
-      attachments
-    });
+  if (!attachments.length && !links.length) {
+    console.warn('No PDFs/links could be generated for delivery.');
+    return res.status(200).send('Webhook received (no deliverables built)');
+  }
 
-    console.log(`📧 Sent ONE email with ${attachments.length} PDF attachment(s) to ${to}`);
-  } else {
+  await sendEmailViaResend({
+    to,
+    subject,
+    html: `
+      <p>${instantVsShippingLine}</p>
+      ${attachments.length ? `<p>Attached: ${attachments.length} PDF(s)</p>` : ''}
+      ${links.length ? `
+        <p>Download the rest here:</p>
+        <ul>
+          ${links.map(l => `<li>Crossword ${l.index} – <a href="${l.url}">Download</a></li>`).join('')}
+        </ul>
+      ` : ''}
+    `,
+    attachments
+  });
+
+  console.log(`📧 Sent ONE email to ${to} (attachments=${attachments.length}, links=${links.length})`);
+else {
     // Links mode (>3): NO attachments, just tokenized downloads
     const base = getPublicBaseUrl(req);
     const links = [];
