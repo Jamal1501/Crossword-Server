@@ -1122,15 +1122,20 @@ for (let idx = 0; idx < lineItems.length; idx++) {
 
   const rec = (typeof PaidPuzzles !== 'undefined') ? PaidPuzzles.get(pid) : null;
 
-  const gridUrl =
-    rec?.crosswordImage ||
-    getProp('_crossword_image_url') ||
-    getProp('_grid_image_url') ||
-    getProp('_custom_image');
+const gridUrl =
+  getProp('_crossword_image_url') ||
+  getProp('_grid_image_url') ||
+  getProp('_custom_image') ||
+  rec?.crosswordImage;
 
-  const bgUrl =
-    rec?.backgroundImage ||
-    getProp('_background_image');
+const bgUrl =
+  getProp('_background_image') ||
+  rec?.backgroundImage;
+
+const cluesUrl =
+  getProp('_clues_image_url') ||
+  rec?.cluesImage;
+
 
   const cluesUrl = rec?.cluesImage || getProp('_clues_image_url');
 
@@ -1145,11 +1150,17 @@ for (let idx = 0; idx < lineItems.length; idx++) {
     String(explicitCluesText || '').trim() ||
     '';
 
-  const themeKey =
-    rec?.themeKey ||
-    (design_specs && (design_specs.themeKey || design_specs.theme || design_specs.theme_key)) ||
-    getProp('_theme') ||
-    'default';
+const themeKey =
+  (() => {
+    const raw = getProp('_design_specs') || '';
+    try {
+      const ds = raw ? JSON.parse(raw) : null;
+      return (ds && (ds.themeKey || ds.theme || ds.theme_key)) || getProp('_theme') || '';
+    } catch { return getProp('_theme') || ''; }
+  })()
+  || rec?.themeKey
+  || 'default';
+
 
   // keep your existing computedScale logic if you want (it mostly affects clue font sizing)
   let computedScale = 1;
