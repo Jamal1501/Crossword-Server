@@ -270,6 +270,26 @@ const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 const PDF_TOKEN_SECRET = process.env.PDF_TOKEN_SECRET || 'dev_change_me';
 const SHOPIFY_APP_PROXY_SECRET = process.env.SHOPIFY_APP_PROXY_SECRET || '';
 const PaidPuzzles = new Map(); // puzzleId -> { orderId, email, crosswordImage, cluesImage, when }
+const PaidDeliverables = new Map(); // deliverableId -> { orderId, email, puzzleId, crosswordImage, backgroundImage, cluesImage, cluesText, themeKey, when }
+
+function issueDeliverableToken(deliverableId, orderId) {
+  return crypto.createHmac('sha256', PDF_TOKEN_SECRET)
+    .update(`${deliverableId}|${orderId}`)
+    .digest('hex');
+}
+
+function verifyDeliverableToken(deliverableId, orderId, token) {
+  if (!token || !deliverableId || !orderId) return false;
+
+  const expected = issueDeliverableToken(String(deliverableId), String(orderId));
+  try {
+    const a = Buffer.from(String(token), 'hex');
+    const b = Buffer.from(String(expected), 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
 
 function issuePdfToken(puzzleId, orderId) {
   return crypto.createHmac('sha256', PDF_TOKEN_SECRET)
@@ -1081,90 +1101,104 @@ try {
   const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
 
   // 1) Collect unique puzzleIds in the order they appear (no guessing)
-  const deliverables = [];
-  const seen = new Set();
+const deliverables = [];
+const seenLineItems = new Set();
 
-  for (const li of lineItems) {
-    const props = Array.isArray(li.properties) ? li.properties : [];
-    const getProp = (name) => {
-      const p = props.find(x => x && x.name === name);
-      return p ? String(p.value || '') : '';
-    };
+for (let idx = 0; idx < lineItems.length; idx++) {
+  const li = lineItems[idx];
 
-    const pid = getProp('_puzzle_id');
-    if (!pid || seen.has(pid)) continue;
-    seen.add(pid);
+  const lineItemId = String(li.id || idx); // Shopify line item id is ideal
+  if (seenLineItems.has(lineItemId)) continue;
+  seenLineItems.add(lineItemId);
 
-    // Prefer server-side record if available (more reliable)
-    const rec = (typeof PaidPuzzles !== 'undefined') ? PaidPuzzles.get(pid) : null;
+  const props = Array.isArray(li.properties) ? li.properties : [];
+  const getProp = (name) => {
+    const p = props.find(x => x && x.name === name);
+    return p ? String(p.value || '') : '';
+  };
 
-    // Fallback to line item properties if record missing
-const gridUrl =
-  rec?.crosswordImage ||
-  getProp('_crossword_image_url') ||
-  getProp('_grid_image_url') ||
-  getProp('_custom_image');
+  const pid = getProp('_puzzle_id');
+  if (!pid) continue;
 
-const bgUrl =
-  rec?.backgroundImage ||
-  getProp('_background_image');
-    const cluesUrl = rec?.cluesImage || getProp('_clues_image_url');
-    const shopVid  = String(li.variant_id || '');
-    const themeKey =
-      rec?.themeKey
-      || (() => {
-        const raw = getProp('_design_specs') || '';
-        try {
-          const ds = raw ? JSON.parse(raw) : null;
-          return (ds && (ds.themeKey || ds.theme || ds.theme_key)) || getProp('_theme') || 'default';
-        } catch {
-          return getProp('_theme') || 'default';
-        }
-      })();
+  const rec = (typeof PaidPuzzles !== 'undefined') ? PaidPuzzles.get(pid) : null;
 
-    // clues text: prefer stored record, then design_specs.clues_text, then explicit _clues_text
-    const designSpecsRaw = getProp('_design_specs') || '';
-    let design_specs = null;
-    try { design_specs = designSpecsRaw ? JSON.parse(designSpecsRaw) : null; } catch { design_specs = null; }
+  const gridUrl =
+    rec?.crosswordImage ||
+    getProp('_crossword_image_url') ||
+    getProp('_grid_image_url') ||
+    getProp('_custom_image');
 
-    const explicitCluesText = getProp('_clues_text') || '';
-    const cluesText =
-      (rec?.cluesText && String(rec.cluesText).trim())
-      || (design_specs && String(design_specs.clues_text || '').trim())
-      || String(explicitCluesText || '').trim()
-      || '';
+  const bgUrl =
+    rec?.backgroundImage ||
+    getProp('_background_image');
 
-    // computed scale (keep your existing behavior)
-    let computedScale = 1;
-    try {
-      const area = printAreas?.[shopVid] || null;
-      let scale = 1.0;
-      const sizeVal = design_specs?.size;
-      if (typeof sizeVal === 'string') {
-        const s = sizeVal.trim();
-        if (s.endsWith('%')) {
-          const pct = parseFloat(s);
-          if (!Number.isNaN(pct)) scale = Math.max(0.1, Math.min(2, pct / 100));
-        } else if (s.endsWith('px') && area?.width) {
-          const px = parseFloat(s);
-          if (!Number.isNaN(px)) scale = Math.max(0.1, Math.min(2, px / area.width));
-        }
+  const cluesUrl = rec?.cluesImage || getProp('_clues_image_url');
+
+  const designSpecsRaw = getProp('_design_specs') || '';
+  let design_specs = null;
+  try { design_specs = designSpecsRaw ? JSON.parse(designSpecsRaw) : null; } catch {}
+
+  const explicitCluesText = getProp('_clues_text') || '';
+  const cluesText =
+    (rec?.cluesText && String(rec.cluesText).trim()) ||
+    (design_specs && String(design_specs.clues_text || '').trim()) ||
+    String(explicitCluesText || '').trim() ||
+    '';
+
+  const themeKey =
+    rec?.themeKey ||
+    (design_specs && (design_specs.themeKey || design_specs.theme || design_specs.theme_key)) ||
+    getProp('_theme') ||
+    'default';
+
+  // keep your existing computedScale logic if you want (it mostly affects clue font sizing)
+  let computedScale = 1;
+  try {
+    const shopVid = String(li.variant_id || '');
+    const area = printAreas?.[shopVid] || null;
+    let scale = 1.0;
+    const sizeVal = design_specs?.size;
+    if (typeof sizeVal === 'string') {
+      const s = sizeVal.trim();
+      if (s.endsWith('%')) {
+        const pct = parseFloat(s);
+        if (!Number.isNaN(pct)) scale = Math.max(0.1, Math.min(2, pct / 100));
+      } else if (s.endsWith('px') && area?.width) {
+        const px = parseFloat(s);
+        if (!Number.isNaN(px)) scale = Math.max(0.1, Math.min(2, px / area.width));
       }
-      computedScale = scale;
-    } catch {
-      // keep default
     }
+    computedScale = scale;
+  } catch {}
 
-deliverables.push({
-  pid,
-  gridUrl,
-  bgUrl,       // ✅ NEW
-  cluesUrl,
-  cluesText,
-  themeKey,
-  computedScale,
-});
-  }
+  const deliverableId = `${orderId}:${lineItemId}`;
+
+  // store for link-download later (unique per product line item)
+  PaidDeliverables.set(deliverableId, {
+    orderId: String(orderId),
+    email: String(to),
+    puzzleId: pid,
+    crosswordImage: gridUrl,
+    backgroundImage: bgUrl,
+    cluesImage: cluesUrl,
+    cluesText,
+    themeKey,
+    computedScale,
+    when: new Date().toISOString(),
+  });
+
+  deliverables.push({
+    deliverableId,
+    pid,
+    gridUrl,
+    bgUrl,
+    cluesUrl,
+    cluesText,
+    themeKey,
+    computedScale
+  });
+}
+
 
   if (!deliverables.length) {
     console.warn('No _puzzle_id found in order line_items; cannot deliver PDFs.');
@@ -1188,11 +1222,12 @@ deliverables.push({
   for (let i = 0; i < deliverables.length; i++) {
     const d = deliverables[i];
 
-    const token = issuePdfToken(d.pid, orderId);
-    const url =
-      `${base}/apps/crossword/download-pdf` +
-      `?puzzleId=${encodeURIComponent(d.pid)}` +
-      `&token=${encodeURIComponent(token)}`;
+const token = issueDeliverableToken(d.deliverableId, orderId);
+const url =
+  `${base}/apps/crossword/download-pdf` +
+  `?deliverableId=${encodeURIComponent(d.deliverableId)}` +
+  `&token=${encodeURIComponent(token)}`;
+
 
     // Try to attach until we reach the limit; everything else becomes a link.
     const shouldAttach = attachments.length < ATTACH_LIMIT;
@@ -2423,8 +2458,38 @@ app.get('/apps/crossword/claim-pdf', (req, res) => {
 
 app.get('/apps/crossword/download-pdf', async (req, res) => {
   try {
-    const { puzzleId, token } = req.query;
-    if (!puzzleId || !token) return res.status(400).json({ error: 'Missing puzzleId or token' });
+const { puzzleId, deliverableId, token } = req.query;
+    if ((!puzzleId && !deliverableId) || !token) {
+  return res.status(400).json({ error: 'Missing puzzleId/deliverableId or token' });
+}
+    if (deliverableId) {
+  const rec = PaidDeliverables.get(String(deliverableId));
+  if (!rec) return res.status(404).json({ error: 'No purchase found' });
+
+  if (!verifyDeliverableToken(deliverableId, rec.orderId, token)) {
+    return res.status(403).json({ error: 'Invalid token' });
+  }
+
+  const fetchMaybe = async (url) => (url ? fetchBuf(url) : null);
+
+  const gridBuf = await fetchMaybe(rec.crosswordImage);
+  const cluesBuf = await fetchMaybe(rec.cluesImage);
+  const backgroundBuf = await fetchMaybe(rec.backgroundImage);
+
+  const pdfBytes = await buildGridAndCluesPdf({
+    gridBuf: gridBuf || undefined,
+    cluesBuf: cluesBuf || undefined,
+    backgroundBuf: backgroundBuf || undefined,
+    cluesText: (rec.cluesText || ''),
+    puzzleId: rec.puzzleId,
+    opts: { themeKey: rec.themeKey || 'default', scale: rec.computedScale || 1 }
+  });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="crossword-${String(deliverableId).split(':').pop()}.pdf"`);
+  return res.send(Buffer.from(pdfBytes));
+}
+
 
     const rec = PaidPuzzles.get(puzzleId);
     if (!rec) return res.status(404).json({ error: 'No purchase found' });
