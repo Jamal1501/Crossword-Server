@@ -1051,7 +1051,6 @@ if (!crosswordImage) {
 
 
 const cluesImage     = getProp('_clues_image_url');
-const backgroundImage = getProp('_background_image');
 
 
       // NEW: parse text from design_specs / _clues_text
