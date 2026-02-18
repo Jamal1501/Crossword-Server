@@ -2482,6 +2482,22 @@ const { puzzleId, deliverableId, token } = req.query;
   const cluesBuf = await fetchMaybe(rec.cluesImage);
   const backgroundBuf = await fetchMaybe(rec.backgroundImage);
 
+
+  const isComposite = (u) => /\/crosswords_final\//i.test(String(u || ''));
+
+// If the “grid” is actually a composite, DO NOT apply background again.
+const effectiveBackgroundBuf =
+  isComposite(rec.crosswordImage) ? null : backgroundBuf;
+
+const pdfBytes = await buildGridAndCluesPdf({
+  gridBuf: gridBuf || undefined,
+  cluesBuf: cluesBuf || undefined,
+  backgroundBuf: effectiveBackgroundBuf || undefined,
+  cluesText: (rec.cluesText || ''),
+  puzzleId: rec.puzzleId,
+  opts: { themeKey: rec.themeKey || 'default', scale: rec.computedScale || 1 }
+});
+
   const pdfBytes = await buildGridAndCluesPdf({
     gridBuf: gridBuf || undefined,
     cluesBuf: cluesBuf || undefined,
