@@ -2498,14 +2498,6 @@ const pdfBytes = await buildGridAndCluesPdf({
   opts: { themeKey: rec.themeKey || 'default', scale: rec.computedScale || 1 }
 });
 
-  const pdfBytes = await buildGridAndCluesPdf({
-    gridBuf: gridBuf || undefined,
-    cluesBuf: cluesBuf || undefined,
-    backgroundBuf: backgroundBuf || undefined,
-    cluesText: (rec.cluesText || ''),
-    puzzleId: rec.puzzleId,
-    opts: { themeKey: rec.themeKey || 'default', scale: rec.computedScale || 1 }
-  });
 
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="crossword-${String(deliverableId).split(':').pop()}.pdf"`);
