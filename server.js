@@ -1033,10 +1033,22 @@ app.post('/webhooks/orders/create', async (req, res) => {
       if (!pid) continue;
       
 // ✅ PDF wants UNMERGED crossword, not the merged composite
-const crosswordImage =
+let crosswordImage =
   getProp('_crossword_image_url') ||
   getProp('_grid_image_url') ||
-  getProp('_custom_image');
+  '';
+
+// If there is a background, NEVER accept a merged final as the "crossword" layer.
+const backgroundImage = getProp('_background_image') || '';
+if (backgroundImage && /\/crosswords_final\//i.test(String(crosswordImage))) {
+  console.warn('[PDF] Rejecting merged crosswordImage for puzzle:', pid, crosswordImage);
+  crosswordImage = '';
+}
+
+if (!crosswordImage) {
+  console.warn('[PDF] Missing clean crossword image for puzzle:', pid);
+}
+
 
 const cluesImage     = getProp('_clues_image_url');
 const backgroundImage = getProp('_background_image');
