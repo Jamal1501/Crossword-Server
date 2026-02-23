@@ -828,7 +828,7 @@ async function handlePrintifyOrder(order) {
   });
 
   // BATCH mode: one Printify order with multiple line_items.
-  const BATCH_MODE = true; // keep simple and safe; switch to env flag later if you want
+  const BATCH_MODE = process.env.PRINTIFY_BATCH_MODE === '1'; // default OFF (batch is risky across providers)
   const batchItems = [];
 
   // Build one recipient from the order shipping address
@@ -844,6 +844,11 @@ async function handlePrintifyOrder(order) {
     country: _ship.country_code || _ship.country || '',
     zip: _ship.zip || ''
   };
+
+  // Printify shipping lookup is picky (especially ZIPs like "GZR 1360")
+  orderRecipient.country = String(orderRecipient.country || '').trim().toUpperCase();
+  orderRecipient.zip = String(orderRecipient.zip || '').trim().toUpperCase().replace(/\s+/g, '');
+
 
   for (const item of items) {
     if (!item.custom_image || !item.variant_id) {
@@ -966,20 +971,39 @@ if (item.clue_output_mode === 'back' && hasClues && item.clues_image_url) {
     }
   }
 
-  // After collecting all items, submit as a single Printify order
+  // After collecting all items, submit Printify orders.
+  // IMPORTANT: A single Printify order cannot reliably mix multiple print providers (shipping calc fails).
   if (BATCH_MODE && batchItems.length > 0) {
-    try {
-      const response = await createOrderBatch({
-        items: batchItems,
-        recipient: orderRecipient,
-        externalId: `shopify-${order?.id || Date.now()}`
-      });
-      console.log('✅ Printify BATCH order created:', response?.id || '[no id]', { count: batchItems.length });
-    } catch (err) {
-      console.error('❌ Failed to create Printify BATCH order:', {
-        count: batchItems.length, err: err?.message || err
-      });
+    const groups = new Map(); // printProviderId -> items[]
+    for (const it of batchItems) {
+      try {
+        const meta = await resolveBpPpForVariant(it.variantId);
+        const key = String(meta.printProviderId);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(it);
+      } catch (e) {
+        console.warn('⚠️ Batch grouping: unable to resolve bp/pp for variant; skipping item', {
+          variantId: it.variantId, err: e?.message || e
+        });
+      }
     }
+
+    for (const [pp, groupItems] of groups.entries()) {
+      try {
+        const response = await createOrderBatch({
+          items: groupItems,
+          recipient: orderRecipient,
+          externalId: `shopify-${order?.id || Date.now()}-pp${pp}`
+        });
+        console.log('✅ Printify BATCH order created:', response?.id || '[no id]', { pp, count: groupItems.length });
+      } catch (err) {
+        console.error('❌ Failed to create Printify BATCH order:', {
+          pp, count: groupItems.length, err: err?.message || err
+        });
+      }
+    }
+  } else if (!BATCH_MODE) {
+    // Legacy mode already created per-item orders above.
   }
 }
 
