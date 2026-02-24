@@ -2666,10 +2666,11 @@ async function fetchAllProductsPagedFiltered() {
 async function verifyCatalogPair(blueprintId, printProviderId, variantId) {
   const url = `${PRINTIFY_BASE}/catalog/blueprints/${blueprintId}/print_providers/${printProviderId}/variants.json`;
   const data = await safeFetch(url, { headers: PIFY_HEADERS });
-  const ok = !!data?.variants?.some(v => Number(v.id) === Number(variantId));
-  if (!ok) {
+  const v = (data?.variants || []).find(x => Number(x?.id) === Number(variantId));
+  if (!v) {
     throw new Error(`Variant ${variantId} not offered by bp ${blueprintId} / pp ${printProviderId}`);
   }
+  return { data, variant: v };
 }
 
 // --- Try to read placeholder names (front/back/etc.) ---
@@ -2747,9 +2748,10 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
       });
     }
 
-    // Verify variant exists in Printify catalog
+    // Verify variant exists in Printify catalog (and grab catalog variant meta)
+    let catalogPair = null;
     try {
-      await verifyCatalogPair(bp, pp, variantId);
+      catalogPair = await verifyCatalogPair(bp, pp, variantId);
     } catch (e) {
       console.warn(`⚠️ Catalog verification failed for variant ${variantId}:`, e.message);
       return res.json({
@@ -2763,7 +2765,7 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
       });
     }
 
-    // Get placeholder names (front, back, etc.)
+// Get placeholder names (front, back, etc.)
     let placeholders = ['front'];
     try {
       placeholders = await getVariantPlaceholderNames(bp, pp);
@@ -2784,7 +2786,31 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
       // ignore and rely on catalog-only data
     }
 
-    const hasBack = placeholders.some(n => /back|rear|reverse|backside|secondary|alt/i.test(n));
+    
+    // Placeholder pixel dimensions for accurate editor print-area sizing
+    let placeholder_dims = { front: null, back: null };
+
+    try {
+      const vMeta = catalogPair?.variant || null;
+      const phs = Array.isArray(vMeta?.placeholders) ? vMeta.placeholders : [];
+
+      const pick = (positions) => {
+        for (const pos of positions) {
+          const want = String(pos || '').toLowerCase();
+          const ph = phs.find(p => String(p?.position || '').toLowerCase() === want);
+          if (ph && ph.width && ph.height) return { width: ph.width, height: ph.height, position: want };
+        }
+        return null;
+      };
+
+      // Try common names first; fall back to Printify helper if needed
+      placeholder_dims.front = pick(['front', 'default']) || await getVariantPlaceholderByPos(bp, pp, variantId, 'front');
+      placeholder_dims.back  = pick(['back', 'rear', 'reverse', 'backside', 'secondary'])
+                                || await getVariantPlaceholderByPos(bp, pp, variantId, 'back');
+    } catch (_) {
+      // keep nulls
+    }
+const hasBack = placeholders.some(n => /back|rear|reverse|backside|secondary|alt/i.test(n));
 
     console.log(`✅ Variant ${variantId} specs: has_back=${hasBack}, placeholders=${placeholders.join(',')}`);
 
@@ -2798,6 +2824,7 @@ app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
       blueprint_id: bp,
       print_provider_id: pp,
       placeholders,
+      placeholder_dims,
       has_back: hasBack,
       hasBack: hasBack
     });
