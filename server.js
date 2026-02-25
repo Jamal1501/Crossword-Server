@@ -16,6 +16,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import axios from 'axios';
+import { registerCatalogRoutes } from './routes/catalogRoutes.js';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -218,37 +219,7 @@ app.get('/apps/crossword/config', (req, res) => {
 });
 
 
-// Resolve Shopify variant ID → Printify variant ID
-app.get('/apps/crossword/resolve-printify-variant/:shopifyVariantId', async (req, res) => {
-  try {
-    const shopifyVid = String(req.params.shopifyVariantId);
-    if (!shopifyVid) {
-      return res.status(400).json({ ok: false, error: 'Missing shopifyVariantId' });
-    }
-    const printifyVid = variantMap[shopifyVid];
-    if (printifyVid) {
-      return res.json({ ok: true, shopify_variant_id: shopifyVid, printify_variant_id: printifyVid });
-    }
-    console.warn(`⚠️ No Printify mapping for Shopify variant ${shopifyVid}`);
-    return res.status(404).json({ ok: false, error: 'No Printify mapping found', shopify_variant_id: shopifyVid });
-  } catch (err) {
-    console.error('❌ resolve-printify-variant error:', err);
-    return res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// Debug route: confirm the server actually loaded your file
-app.get('/print-areas', (req, res) => {
-  res.json({
-    path: PRINT_AREAS_PATH,
-    count: Object.keys(printAreas).length,
-    sampleKeys: Object.keys(printAreas).slice(0, 20)
-  });
-});
-
-app.get('/print-areas.json', (req, res) => {
-  res.json(printAreas);
-});
+// Catalog/debug routes moved to routes/catalogRoutes.js
 
 app.get('/apps/crossword/postcard-variant-id', async (req, res) => {
   const id = process.env.POSTCARD_SHOPIFY_VARIANT_ID; // optional legacy
@@ -1690,103 +1661,6 @@ async function getAllowedShopifyVariantIdsForTheme(themeKey) {
   return set;
 }
 
-// Printify-only product feed (uses variantMap to link back)
-app.get('/apps/crossword/products', async (req, res) => {
-  try {
-    const DEFAULT_AREA = { width: 800, height: 500, top: 50, left: 50 };
-
-    const themeKey = pickThemeKey(req);
-    const allowedShopifyVariantIds = await getAllowedShopifyVariantIdsForTheme(themeKey);
-
-    // 0) Reverse variantMap: printifyVid -> [shopifyVid...]
-    const rev = {};
-    for (const [shopVid, pifyVid] of Object.entries(variantMap || {})) {
-      const k = String(pifyVid);
-      if (!rev[k]) rev[k] = [];
-      rev[k].push(String(shopVid));
-    }
-
-    // 1) Pull visible Printify products
-    const pifyProducts = await fetchAllProductsPagedFiltered();
-
-    const out = [];
-    for (const p of pifyProducts) {
-      // NOTE: NEVER use Printify mockup images for selector thumbnails (they can contain the last customer's upload).
-      const selector = getSelectorImageForProduct(themeKey, p.id);
-      const img = (selector && selector.primary) ? selector.primary : SAFE_SELECTOR_PLACEHOLDER;
-      const gallery = (selector && selector.gallery) ? selector.gallery : [];
-
-      // mapped variants only
-      let mappedVariants = (p.variants || []).filter(v => rev[String(v.id)] && rev[String(v.id)][0]);
-
-      // Theme filtering: keep only variants whose Shopify variant ID is in the theme collection
-      // If allowedShopifyVariantIds is null => no filtering (show all mapped variants)
-      if (allowedShopifyVariantIds) {
-        mappedVariants = mappedVariants.filter(v => {
-          const shopVid = rev[String(v.id)]?.[0];
-          return shopVid && allowedShopifyVariantIds.has(String(shopVid));
-        });
-      }
-
-      if (!mappedVariants.length) continue; // nothing sellable (or nothing allowed)
-
-      // pick a preferred mapped variant
-      const pref = mappedVariants[0];
-      const firstShopifyVid = rev[String(pref.id)][0];
-
-      // build UI variants (only mapped / allowed)
-      const variantList = mappedVariants.map(v => {
-        const shopVid = rev[String(v.id)][0];
-        return {
-          title: v.title || '',
-          shopifyVariantId: shopVid,
-          printifyVariantId: v.id,
-          price: parseFloat(v.price) || 0,
-          options: { option1: null, option2: null, option3: null },
-          printArea: printAreas[shopVid] || DEFAULT_AREA
-        };
-      });
-
-      // full list for disabling unmapped combos in UI
-      const allVariantList = (p.variants || []).map(v => {
-        const shopVid = (rev[String(v.id)] || [null])[0];
-        return {
-          title: v.title || '',
-          shopifyVariantId: shopVid ? String(shopVid) : '',
-          printifyVariantId: v.id || null,
-          price: parseFloat(v.price) || 0,
-          options: { option1: null, option2: null, option3: null },
-          printArea: shopVid ? (printAreas[String(shopVid)] || DEFAULT_AREA) : DEFAULT_AREA,
-          image: img
-        };
-      });
-
-      out.push({
-        id: p.id,
-        printifyVariantId: pref.id,
-        variants: variantList,
-        title: p.title,
-        optionNames: [],
-        handle: '',
-        image: img,
-        gallery: gallery,
-shopifyVariantId: String(firstShopifyVid || ''),
-        printifyProductId: p.id,
-        variantId: firstShopifyVid ? Number(firstShopifyVid) : null,
-        price: parseFloat(pref.price) || 0,
-        printArea: printAreas[String(firstShopifyVid)] || DEFAULT_AREA,
-        allVariants: allVariantList
-      });
-    }
-
-    res.json({ products: out });
-  } catch (err) {
-    console.error('❌ /apps/crossword/products failed:', err);
-    res.status(500).json({ error: 'Failed to load products', details: err.message });
-  }
-});
-
-
 
 app.get('/apps/crossword/preview-product/legacy', async (req, res) => {
   try {
@@ -2698,174 +2572,27 @@ async function getVariantPlaceholderNames(blueprintId, printProviderId) {
   return Array.from(names);
 }
 
-// ======================= PRODUCT SPECS ROUTE =========================
-app.get('/apps/crossword/product-specs/:variantId', async (req, res) => {
-  try {
-    const variantId = Number(req.params.variantId);
 
-    if (!variantId || isNaN(variantId)) {
-      return res.status(400).json({
-        ok: false,
-        error: 'Invalid variantId',
-        received: req.params.variantId
-      });
-    }
-
-    console.log(`[product-specs] Looking up variant ${variantId}`);
-
-    // Fetch all products (with filtering)
-    const products = await fetchAllProductsPagedFiltered();
-
-    // Find product containing this variant
-    const product = products.find(p =>
-      p?.variants?.some(v => Number(v.id) === variantId)
-    );
-
-    if (!product) {
-      console.warn(`⚠️ Variant ${variantId} not found among ${products.length} visible products`);
-      return res.status(404).json({
-        ok: false,
-        error: `Variant ${variantId} not found`,
-        has_back: false,
-        scanned_products: products.length
-      });
-    }
-
-    const bp = Number(product.blueprint_id);
-    const pp = Number(product.print_provider_id);
-
-    // Guard against invalid blueprints
-    if (!bp || String(bp).length < 3 || bp === 1111 || bp === 11111) {
-      console.warn(`⚠️ Invalid blueprint ${bp} for product "${product.title}"`);
-      return res.json({
-        ok: true,
-        variant_id: variantId,
-        product_id: product.id,
-        title: product.title,
-        has_back: false,
-        hasBack: false,
-        error: 'Invalid blueprint'
-      });
-    }
-
-    // Verify variant exists in Printify catalog (and grab catalog variant meta)
-    let catalogPair = null;
-    try {
-      catalogPair = await verifyCatalogPair(bp, pp, variantId);
-    } catch (e) {
-      console.warn(`⚠️ Catalog verification failed for variant ${variantId}:`, e.message);
-      return res.json({
-        ok: true,
-        variant_id: variantId,
-        product_id: product.id,
-        title: product.title,
-        has_back: false,
-        hasBack: false,
-        error: 'Not in catalog'
-      });
-    }
-
-// Get placeholder names (front, back, etc.)
-    let placeholders = ['front'];
-    try {
-      placeholders = await getVariantPlaceholderNames(bp, pp);
-    } catch (e) {
-      // keep fallback
-    }
-
-    // 🔧 ADD: merge variant-specific placements from the actual shop product
-    try {
-      const detail = await safeFetch(`${PRINTIFY_BASE}/shops/${SHOP_ID}/products/${product.id}.json`, { headers: PIFY_HEADERS });
-      const fromProduct = (detail?.print_areas || [])
-        .flatMap(a => (a?.placeholders || []).map(ph =>
-          (ph?.position || ph?.name || '').toString().trim().toLowerCase()
-        ))
-        .filter(Boolean);
-      placeholders = Array.from(new Set([...placeholders, ...fromProduct]));
-    } catch (_) {
-      // ignore and rely on catalog-only data
-    }
-
-    
-    // Placeholder pixel dimensions for accurate editor print-area sizing
-    let placeholder_dims = { front: null, back: null };
-
-    try {
-      const vMeta = catalogPair?.variant || null;
-      const phs = Array.isArray(vMeta?.placeholders) ? vMeta.placeholders : [];
-
-      const pick = (positions) => {
-        for (const pos of positions) {
-          const want = String(pos || '').toLowerCase();
-          const ph = phs.find(p => String(p?.position || '').toLowerCase() === want);
-          if (ph && ph.width && ph.height) return { width: ph.width, height: ph.height, position: want };
-        }
-        return null;
-      };
-
-      // Try common names first; fall back to Printify helper if needed
-      placeholder_dims.front = pick(['front', 'default']) || await getVariantPlaceholderByPos(bp, pp, variantId, 'front');
-      placeholder_dims.back  = pick(['back', 'rear', 'reverse', 'backside', 'secondary'])
-                                || await getVariantPlaceholderByPos(bp, pp, variantId, 'back');
-    } catch (_) {
-      // keep nulls
-    }
-const hasBack = placeholders.some(n => /back|rear|reverse|backside|secondary|alt/i.test(n));
-
-    console.log(`✅ Variant ${variantId} specs: has_back=${hasBack}, placeholders=${placeholders.join(',')}`);
-
-    return res.json({
-      ok: true,
-      variant_id: variantId,
-      product_id: product.id,
-      title: product.title,
-      visible: product.visible,
-      is_locked: product.is_locked,
-      blueprint_id: bp,
-      print_provider_id: pp,
-      placeholders,
-      placeholder_dims,
-      has_back: hasBack,
-      hasBack: hasBack
-    });
-
-  } catch (err) {
-    console.error('❌ product-specs error:', err);
-    return res.status(500).json({
-      ok: false,
-      error: err.message,
-      has_back: false
-    });
-  }
+// ======================= CATALOG / PRODUCT ROUTES (MODULE) =========================
+registerCatalogRoutes(app, {
+  variantMap,
+  printAreas,
+  PRINT_AREAS_PATH,
+  SAFE_SELECTOR_PLACEHOLDER,
+  pickThemeKey,
+  getAllowedShopifyVariantIdsForTheme,
+  getSelectorImageForProduct,
+  fetchAllProductsPagedFiltered,
+  verifyCatalogPair,
+  getVariantPlaceholderNames,
+  safeFetch,
+  getVariantPlaceholderByPos,
+  PRINTIFY_BASE,
+  SHOP_ID,
+  PIFY_HEADERS
 });
 
-// ======================= DEBUG: VARIANT LIVE =========================
-app.get('/apps/crossword/debug/variant/:variantId/live', async (req, res) => {
-  try {
-    const variantId = Number(req.params.variantId);
-    const products = await fetchAllProductsPagedFiltered();
-    const matched = products.find(p => p?.variants?.some(v => Number(v.id) === variantId));
-    if (!matched) {
-      return res.status(404).json({
-        ok: false,
-        message: `Variant ${variantId} not found among visible products`,
-        total: products.length
-      });
-    }
-    res.json({
-      ok: true,
-      variant_id: variantId,
-      product_id: matched.id,
-      title: matched.title,
-      visible: matched.visible,
-      is_locked: matched.is_locked,
-      blueprint_id: matched.blueprint_id,
-      print_provider_id: matched.print_provider_id
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
+// ======================= DEBUG: VARIANT LIVE (moved) =========================
 
 // [ADMIN] List Shopify variants that are missing from variantMap
 app.get('/admin/variant-map/gaps', async (req, res) => {
